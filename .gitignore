@@ -1,0 +1,24 @@
+# Harvested quote pool (built by holmes_harvest.py; large)
+holmes_quotes.json
+
+# Harvested photo metadata (built by holmes_images_harvest.py; large)
+holmes_images.json
+
+# Runtime state (posted quote IDs, last-success timestamp)
+holmes_state.json
+
+# Backups the harvester writes alongside the pool
+*.bak.json
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store

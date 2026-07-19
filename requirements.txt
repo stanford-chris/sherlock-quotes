@@ -1,0 +1,6 @@
+# holmes_post.py — posting to Bluesky
+atproto>=0.0.55
+
+# Note: harvesting shells out to `curl` (a command-line tool, not a pip
+# package) to fetch texts from Project Gutenberg and photo metadata from the
+# Library of Congress. No other third-party Python packages are required.
