@@ -26,7 +26,7 @@ from pathlib import Path
 from atproto import Client, client_utils, models
 
 QUOTES_FILE  = Path(__file__).parent / 'holmes_quotes.json'
-IMAGES_FILE  = Path(__file__).parent / 'holmes_images.json'
+IMAGES_FILE  = Path(__file__).parent / 'holmes_scenes.json'
 STATE_FILE   = Path(__file__).parent / 'holmes_state.json'
 
 HANDLE           = 'sherlockquotes.bsky.social'
@@ -47,10 +47,10 @@ BOOK_META = {
     'The Case-Book of Sherlock Holmes':  ('https://www.gutenberg.org/ebooks/69700', '🗂️'),
 }
 
+# Hashtags appended (as clickable facets) to the attribution post. Each entry is
+# (display_text, tag_value); the '#' is added at render time.
 TAGS = [
     ('SherlockHolmes', 'SherlockHolmes'),
-    ('ConanDoyle',     'ConanDoyle'),
-    ('Victorian',      'Victorian'),
 ]
 
 
@@ -128,41 +128,6 @@ STORY_EMOJI = {_story_key(k): v for k, v in {
     'The Adventure of the Retired Colourman':      '🎨',
 }.items()}
 
-# Quote keywords → image tags for matching
-# Each entry: (keywords_in_quote, image_tag)
-QUOTE_TO_IMAGE_TAG = [
-    (['river', 'thames', 'stream', 'water', 'boat', 'barge', 'tide', 'bank', 'shore',
-      'embankment', 'wharf', 'current', 'flood', 'rowing'],          'river'),
-    (['bridge', 'span'],                                               'bridge'),
-    (['street', 'road', 'pavement', 'lane', 'alley', 'corner',
-      'cab', 'hansom', 'omnibus', 'carriage', 'traffic', 'crowd',
-      'gutter', 'kerb', 'footstep'],                                  'street'),
-    (['church', 'cathedral', 'abbey', 'chapel', 'steeple', 'bell',
-      'prayer', 'sermon', 'burial', 'grave', 'tomb'],                 'church'),
-    (['tower', 'turret', 'battlement', 'fortress', 'castle',
-      'rampart'],                                                      'tower'),
-    (['park', 'garden', 'lawn', 'tree', 'grass', 'leaf', 'branch',
-      'flower', 'bush', 'shrub', 'wood', 'forest'],                   'park'),
-    (['fog', 'mist', 'haze', 'smoke', 'murk', 'damp', 'grey',
-      'gray', 'gloom', 'shadow', 'dark', 'dusk', 'twilight',
-      'candle', 'lamp', 'lantern'],                                   'fog'),
-    (['night', 'midnight', 'moon', 'star', 'dawn', 'morning',
-      'evening'],                                                      'night'),
-    (['market', 'shop', 'stall', 'vendor', 'merchant', 'trade',
-      'wares', 'goods'],                                               'market'),
-    (['palace', 'mansion', 'manor', 'estate', 'hall'],                'palace'),
-    (['parliament', 'government', 'minister', 'political'],           'parliament'),
-    (['dock', 'port', 'harbour', 'harbor', 'quay', 'vessel',
-      'ship', 'steamer'],                                              'dock'),
-    (['station', 'train', 'railway', 'platform', 'carriage',
-      'locomotive'],                                                   'station'),
-    (['room', 'chamber', 'study', 'library', 'fireplace', 'hearth',
-      'armchair', 'table', 'mantelpiece', 'shelf'],                   'interior'),
-    (['portrait', 'face', 'eyes', 'expression', 'features',
-      'countenance'],                                                  'portrait'),
-]
-
-
 def keychain_password(account, service):
     result = subprocess.run(
         ['security', 'find-generic-password', '-a', account, '-s', service, '-w'],
@@ -218,61 +183,69 @@ def pick_quote(quotes, posted_ids):
     return random.choice(narrative)
 
 
-def infer_image_tags(quote_text):
-    """Return a list of image tags inferred from keywords in the quote.
+def _match_key(s):
+    """Fuzzy key for comparing a quote's story to a scene's story, tolerant of
+    'The Adventure of ...' prefixes and singular/plural differences.
+    e.g. 'Silver Blaze' and 'The Adventure of Silver Blaze' -> 'silver blaze'."""
+    s = (s or '').lower().replace('’', "'").replace('‘', "'")
+    s = re.sub(r'[^a-z0-9 ]', '', s)
+    s = re.sub(r'^(the adventure of the |the adventure of |the |a |an )', '', s)
+    s = s.strip()
+    return s[:-1] if s.endswith('s') else s
 
-    Uses word-boundary matching so a short keyword doesn't fire inside a longer
-    word (e.g. 'river' must not match inside 'driver', 'bank' not in 'banker')."""
+
+ATMOSPHERE_WORDS = (
+    'fog', 'mist', 'moor', 'night', 'midnight', 'moon', 'dark', 'shadow',
+    'gloom', 'ghost', 'spectre', 'specter', 'phantom', 'grave', 'death',
+    'storm', 'candle', 'lamp', 'lantern',
+)
+
+
+def is_atmospheric(quote_text):
+    """True if a quote is eerie enough to justify a ghoulish atmosphere image."""
     lower = quote_text.lower()
-    matched = []
-    for keywords, tag in QUOTE_TO_IMAGE_TAG:
-        if any(re.search(rf'\b{re.escape(kw)}\b', lower) for kw in keywords):
-            matched.append(tag)
-    return matched
+    return any(re.search(rf'\b{w}\b', lower) for w in ATMOSPHERE_WORDS)
 
 
-def pick_images(images, desired_tags, n=5):
-    """Return up to n candidate images (best-match first) to try in order."""
-    # Exclude stereo card images (very wide format, renders poorly on Bluesky)
-    images = [
-        img for img in images
-        if not any('stereo' in s.lower() for s in img.get('subjects', []))
-        and '/stereo/' not in img.get('image_url', '')
-        and '/pan/' not in img.get('image_url', '')
-    ]
-
-    def is_british(img):
-        # Match 'london' only when not preceded by 'new' (excludes New London, Conn.)
-        london_re = re.compile(r'(?<!new )london', re.IGNORECASE)
-        subjects = ' '.join(img.get('subjects', []))
-        title = img.get('title', '')
-        return ('england' in subjects.lower()
-                or london_re.search(subjects)
-                or london_re.search(title))
-
-    # Filter to images confirmed as British to exclude noise
-    london_images = [img for img in images if is_british(img)]
-    pool = london_images or images  # fall back if filter is too aggressive
+def pick_images(images, quote_entry, n=6):
+    """Ordered scene candidates for a quote: same story first, then same book,
+    then any Paget scene. Occasionally leads with a British Library 'ghoulish'
+    atmosphere scene when the quote is suitably eerie."""
+    strand = [s for s in images if s.get('source') == 'strand']
+    atmos  = [s for s in images if s.get('source') == 'british_library']
+    qbook  = quote_entry.get('book')
+    qstory = quote_entry.get('story')
 
     candidates = []
-    if desired_tags:
-        matched = [img for img in pool if any(t in img.get('tags', []) for t in desired_tags)]
+
+    # Occasional atmosphere lead-in for eerie quotes
+    if atmos and is_atmospheric(quote_entry['quote']) and random.random() < 0.25:
+        picks = atmos[:]
+        random.shuffle(picks)
+        candidates.extend(picks[:2])
+
+    # Same story (fuzzy match)
+    if qstory:
+        sk = _match_key(qstory)
+        matched = [s for s in strand if s.get('story') and _match_key(s['story']) == sk]
         random.shuffle(matched)
         candidates.extend(matched)
 
-    # Fill remainder with random picks from pool (no duplicates)
-    remaining = [img for img in pool if img not in candidates]
-    random.shuffle(remaining)
-    candidates.extend(remaining)
+    # Same book
+    if qbook:
+        matched = [s for s in strand if s.get('book') == qbook and s not in candidates]
+        random.shuffle(matched)
+        candidates.extend(matched)
+
+    # Any Paget scene, then any atmosphere scene as last resort
+    rest = [s for s in strand if s not in candidates]
+    random.shuffle(rest)
+    candidates.extend(rest)
+    rest2 = [s for s in atmos if s not in candidates]
+    random.shuffle(rest2)
+    candidates.extend(rest2)
 
     return candidates[:n]
-
-
-def clean_image_title(title):
-    """Strip redundant ', England' when London is already in the title."""
-    if re.search(r'\blondon\b', title, re.IGNORECASE):
-        title = re.sub(r',?\s*England', '', title, flags=re.IGNORECASE).strip()
-    return title
 
 
 SPEAKER_NAMES = {
@@ -307,8 +280,8 @@ def append_attribution(tb, speaker, book, story, image_entry):
     # A collection story uses its own emoji; novels and unmapped/story-less
     # quotes fall back to the collection emoji.
     emoji = STORY_EMOJI.get(_story_key(story), book_emoji) if story else book_emoji
-    img_date = image_entry['date']
-    img_page = image_entry.get('id', '')
+    credit_name = image_entry.get('credit_name', 'Wikimedia Commons')
+    page_url = image_entry.get('page_url', '')
 
     if speaker and speaker != 'narrative':
         full_name = SPEAKER_NAMES.get(speaker, speaker)
@@ -325,12 +298,18 @@ def append_attribution(tb, speaker, book, story, image_entry):
         tb.link(book, book_url)
     else:
         tb.text(book)
-    tb.text(f' {emoji}\n\n\U0001f4f7 ')
-    if img_page:
-        tb.link('Library of Congress', img_page)
+    tb.text(f' {emoji}\n\n✒️ ')
+    if page_url:
+        tb.link(credit_name, page_url)
     else:
-        tb.text('Library of Congress')
-    tb.text(f' ({img_date})')
+        tb.text(credit_name)
+    # Hashtags as clickable facets, on their own line under the credit.
+    if TAGS:
+        tb.text('\n\n')
+        for i, (display, tag) in enumerate(TAGS):
+            if i:
+                tb.text(' ')
+            tb.tag('#' + display, tag)
     return tb
 
 
@@ -348,14 +327,23 @@ def build_combined(quote, speaker, book, story, image_entry):
     return tb
 
 
+MAX_IMAGE_BYTES = 950_000  # stay under Bluesky's ~1 MB blob limit
+
+
 def fetch_image(url):
-    result = subprocess.run(
-        ['curl', '-s', '--http1.1', '--max-time', '30', '-o', '-', url],
-        capture_output=True
-    )
-    if result.returncode != 0 or len(result.stdout) < 1000:
-        raise RuntimeError(f'Failed to fetch image: {url}')
-    return result.stdout
+    """Fetch a Commons Special:FilePath image, stepping the requested width down
+    until the payload fits under Bluesky's blob limit."""
+    for width in (1000, 800, 640, 500):
+        u = re.sub(r'width=\d+', f'width={width}', url) if 'width=' in url else url
+        result = subprocess.run(
+            ['curl', '-s', '-L', '--max-time', '40', '-o', '-', u],
+            capture_output=True
+        )
+        if result.returncode == 0 and 1000 < len(result.stdout) <= MAX_IMAGE_BYTES:
+            return result.stdout
+        if 'width=' not in url:
+            break
+    raise RuntimeError(f'Failed or oversized image: {url}')
 
 
 def main():
@@ -379,15 +367,14 @@ def main():
     print(f'Quote [{qid}] ({speaker} / {story or book}):')
     print(f'  {quote}')
 
-    # Pick image — try up to 5 candidates until one fetches successfully
-    desired_tags = infer_image_tags(quote)
-    print(f'Desired image tags: {desired_tags or ["(any)"]}"')
-    candidates = pick_images(images, desired_tags, n=5)
+    # Pick scene — same story, then same book, then any Paget scene
+    candidates = pick_images(images, quote_entry, n=6)
 
     image_entry = None
     image_bytes = None
     for candidate in candidates:
-        print(f'Trying: {candidate["title"]} ({candidate["date"]})')
+        label = candidate.get('story') or candidate.get('book') or candidate.get('credit_name')
+        print(f'Trying: {label} [{candidate.get("source")}]')
         print(f'  URL:  {candidate["image_url"]}')
         if DRY_RUN:
             image_entry = candidate
@@ -404,8 +391,8 @@ def main():
         print('All candidate images failed to fetch. Aborting.')
         sys.exit(1)
 
-    print(f'Image: {image_entry["title"]} ({image_entry["date"]})')
-    print(f'  Tags: {image_entry["tags"]}')
+    print(f'Image: {image_entry["title"]}')
+    print(f'  source={image_entry.get("source")}  story={image_entry.get("story")}  book={image_entry.get("book")}')
 
     # Format posts. Prefer a single post; only thread if it won't fit.
     combined = build_combined(quote, speaker, book, story, image_entry)
@@ -424,7 +411,11 @@ def main():
         print('(dry run -- not posting)')
         return
 
-    alt_text = f'{image_entry["title"]}, {image_entry["date"]}. Library of Congress.'
+    if image_entry.get('source') == 'strand':
+        subj = image_entry.get('story') or image_entry.get('book') or 'the Sherlock Holmes stories'
+        alt_text = f'Sidney Paget illustration for {subj}, from The Strand Magazine.'
+    else:
+        alt_text = 'Victorian illustration from the British Library Mechanical Curator collection.'
 
     # Post to Bluesky -- quote with image, then attribution as reply
     password = keychain_password(HANDLE, KEYCHAIN_SERVICE)

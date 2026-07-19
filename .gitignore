@@ -22,3 +22,6 @@ venv/
 
 # macOS
 .DS_Store
+
+# Harvested scenes pool (built by holmes_scenes_harvest.py; large)
+holmes_scenes.json
