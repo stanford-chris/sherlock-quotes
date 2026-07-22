@@ -279,6 +279,27 @@ def build_post1(quote):
     return tb
 
 
+def scene_source_note(book, story, image_entry):
+    """A parenthetical naming the illustration's own story when it is not the
+    quote's. Only ~5% of quotes have a same-story Paget scene (measured 22 Jul
+    2026: 116 of 2,470, and 56% have no same-book scene at all), so most posts
+    carry cross-story art; name it honestly rather than presenting it as the
+    scene. A scene whose story is unknown but whose book differs is named by
+    its book; a scene with no book/story metadata (atmosphere art) gets no
+    note."""
+    img_story = image_entry.get('story')
+    img_book = image_entry.get('book')
+    if not (img_story or img_book):
+        return ''
+    quote_key = _match_key(story) if story else _match_key(book)
+    img_key = _match_key(img_story) if img_story else _match_key(img_book)
+    if quote_key and img_key == quote_key:
+        return ''
+    if img_story:
+        return f' (from “{img_story}”)'
+    return f' (from {img_book})'
+
+
 def append_attribution(tb, speaker, book, story, image_entry):
     """Append the attribution + photo credit to an existing TextBuilder."""
     book_url, book_emoji = BOOK_META.get(book, (None, '\U0001f4da'))
@@ -308,6 +329,9 @@ def append_attribution(tb, speaker, book, story, image_entry):
         tb.link(credit_name, page_url)
     else:
         tb.text(credit_name)
+    note = scene_source_note(book, story, image_entry)
+    if note:
+        tb.text(note)
     # Hashtags as clickable facets, on their own line under the credit.
     if TAGS:
         tb.text('\n\n')
