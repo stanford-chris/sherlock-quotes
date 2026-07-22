@@ -173,13 +173,41 @@ def is_complete_quote(text):
     )
 
 
-def pick_quote(quotes, posted_ids):
+# Share of posts drawn from quotes whose own work has a Paget scene. Measured
+# 22 Jul 2026: 506 of 2,230 postable quotes (23%) share a work with a scene —
+# 299 of them from The Hound of the Baskervilles alone — and an unbiased draw
+# lands on one ~21% of the time. The bias lifts truly-matched posts to ~47%,
+# and the draw is flattened BY WORK first (one work, then one quote within
+# it), because a uniform draw over matched quotes would be ~60% Hound and
+# turn the feed into a Hound account.
+MATCHED_ART_BIAS = 1 / 3
+
+
+def _matched_story_keys(images):
+    """Fuzzy keys of every story that has its own Strand Paget scene."""
+    return {_match_key(s['story']) for s in images
+            if s.get('source') == 'strand' and s.get('story')}
+
+
+def pick_quote(quotes, posted_ids, images=None):
     unposted = [
         q for q in quotes
         if quote_id(q['quote']) not in posted_ids and is_complete_quote(q['quote'])
     ]
     if not unposted:
         return None
+    # Matched-art bias: sometimes restrict the draw to quotes whose story (or,
+    # for the novels, whose book) has its own scene, so pick_images finds a
+    # true match. Falls through unbiased once the matched sliver is exhausted.
+    if images and random.random() < MATCHED_ART_BIAS:
+        keys = _matched_story_keys(images)
+        by_work = {}
+        for q in unposted:
+            k = _match_key(q.get('story') or q.get('book'))
+            if k in keys:
+                by_work.setdefault(k, []).append(q)
+        if by_work:
+            unposted = by_work[random.choice(sorted(by_work))]
     # Dialogue is ~10% of the pool; post it 40% of the time to over-represent it for variety.
     dialogue = [q for q in unposted if q.get('speaker') != 'narrative']
     narrative = [q for q in unposted if q.get('speaker') == 'narrative']
@@ -281,10 +309,10 @@ def build_post1(quote):
 
 def scene_source_note(book, story, image_entry):
     """A parenthetical naming the illustration's own story when it is not the
-    quote's. Only ~5% of quotes have a same-story Paget scene (measured 22 Jul
-    2026: 116 of 2,470, and 56% have no same-book scene at all), so most posts
-    carry cross-story art; name it honestly rather than presenting it as the
-    scene. A scene whose story is unknown but whose book differs is named by
+    quote's. Only ~23% of postable quotes share a work with any Paget scene
+    (measured 22 Jul 2026: 506 of 2,230, of which 299 are Hound; 56% of quotes
+    have no same-book scene at all), so most posts carry cross-story art; name
+    it honestly rather than presenting it as the scene. A scene whose story is unknown but whose book differs is named by
     its book; a scene with no book/story metadata (atmosphere art) gets no
     note."""
     img_story = image_entry.get('story')
@@ -382,7 +410,7 @@ def main():
     posted_ids = set(state.get('posted', []))
 
     # Pick quote
-    quote_entry = pick_quote(quotes, posted_ids)
+    quote_entry = pick_quote(quotes, posted_ids, images)
     if quote_entry is None:
         print('All quotes have been posted. Reset holmes_state.json to restart.')
         sys.exit(0)
