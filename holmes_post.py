@@ -16,6 +16,7 @@ Usage:
 
 import hashlib
 import json
+import os
 import random
 import re
 import subprocess
@@ -156,7 +157,11 @@ def load_state():
 
 
 def save_state(state):
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    # Sibling temp file + atomic rename: a crash mid-write can never leave a
+    # truncated state file behind (which would break dedup and cause reposts).
+    tmp = STATE_FILE.with_name(STATE_FILE.name + '.tmp')
+    tmp.write_text(json.dumps(state, indent=2))
+    os.replace(tmp, STATE_FILE)
 
 
 def is_complete_quote(text):
