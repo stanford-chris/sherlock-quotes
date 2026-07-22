@@ -129,7 +129,8 @@ def derive_story(subcat_title):
 
 
 def imageinfo(titles):
-    """Batch imageinfo (<=50 titles): scaled url + original size + licence."""
+    """Batch imageinfo (<=50 titles): scaled url + original size + licence,
+    plus the artist/description used to verify the illustrator."""
     info = {}
     for i in range(0, len(titles), 50):
         batch = titles[i:i + 50]
@@ -145,9 +146,68 @@ def imageinfo(titles):
                 'thumburl': ii.get('thumburl') or ii.get('url'),
                 'descriptionurl': ii.get('descriptionurl'),
                 'license': (md.get('LicenseShortName', {}) or {}).get('value', ''),
+                'artist': _plain((md.get('Artist', {}) or {}).get('value', '')),
+                'desc': _plain((md.get('ImageDescription', {}) or {}).get('value', '')),
             }
         time.sleep(DELAY)
     return info
+
+
+def _plain(v):
+    """Commons metadata arrives as HTML fragments; reduce to bare text."""
+    import html as _html
+    return re.sub(r'<[^>]+>', ' ', _html.unescape(str(v or ''))).strip()
+
+
+# Membership of a "by Sidney Paget" category is NOT evidence that a given file
+# is his: Commons files those categories loosely, and the live pool picked up
+# 21 foreign-edition plates credited to Paget — among them 8 of 10 Silver Blaze
+# scenes and 6 of 7 Beryl Coronet scenes, which are from a French 1913 edition
+# drawn by G. Da Fonseca. Others were by Charles R. Macauley (1905 US edition)
+# and Frederic Dorr Steele. Since the bot prints "Sidney Paget, The Strand
+# Magazine" under every image, attribution has to be evidenced per file.
+PAGET_RE = re.compile(r'\bpaget\b', re.I)
+STRAND_RE = re.compile(r'strand|newnes', re.I)
+# NB: match the "Herlock Sholmes" parody by its surname, never by the substring
+# "herlock" — that also matches "Sherlock" and silently rejects the entire pool.
+FOREIGN_EDITION_RE = re.compile(
+    r'premi[eè]res aventures|avventure|aus den|aventuras|шість|наполє'
+    r'|czarny piotr|welt-detektiv|\bsholmes\b', re.I)
+
+
+# Strings that appear in Artist fields but make no claim about the illustrator:
+# the author, the Strand's publisher, and placeholder values. A file credited
+# only to these tells us nothing either way, so it falls back to the evidence of
+# sitting in a "by Sidney Paget" category.
+NON_ILLUSTRATOR_RE = re.compile(
+    r'\b(a\.?\s*)?conan\s+doyle\b|\barthur\b|\bdoyle\b|\bnewnes\b|\bpublisher\b'
+    r'|\bstrand\b|\bmagazine\b|unknown|\banonymous\b|\bn/?a\b|\bs\.?\s*p\.?\b'
+    r'|\bgeorge\b|\bltd\b|\boriginal\b|\bauthor\b|\bscan\b|\buser\b'
+    # Stopwords, so a leftover "The" is not mistaken for a surname.
+    r'|\b(the|and|for|from|via|out|its|his|her)\b', re.I)
+
+
+def is_paget(title, meta):
+    """True unless this file is evidenced as someone else's work.
+
+    Rejecting anything that fails to *name* Paget is too harsh: plenty of
+    genuine Strand plates carry only "Publisher G. Newnes" or "Arthur Conan
+    Doyle" in the Artist field, and dropping those cost two-thirds of the pool
+    (including 21 of 32 Hound scenes). So the test is inverted — a file is
+    disqualified when its metadata names an illustrator who is not Paget."""
+    artist, desc = meta.get('artist', ''), meta.get('desc', '')
+    blob = ' '.join((title, artist, desc))
+    if FOREIGN_EDITION_RE.search(blob):
+        return False
+    if PAGET_RE.search(blob):
+        return True
+    # Strip the author/publisher/placeholder noise; anything name-like left over
+    # is a competing illustrator (Da Fonseca, Macauley, Steele, ...).
+    residue = NON_ILLUSTRATOR_RE.sub(' ', artist)
+    residue = re.sub(r'[^A-Za-z]+', ' ', residue)
+    if any(len(w) > 2 for w in residue.split()):
+        return False
+    return True
 
 
 def is_public_domain(license_str):
@@ -175,6 +235,8 @@ def add_entry(pool, title, meta, book, story, source, credit):
     if not pid or max(w, h) < MIN_EDGE or not meta.get('thumburl'):
         return False
     if not is_public_domain(meta.get('license')):
+        return False
+    if source == 'strand' and not is_paget(title, meta):
         return False
     if pid in pool:
         if story and not pool[pid]['story']:

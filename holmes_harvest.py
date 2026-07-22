@@ -167,6 +167,25 @@ def fetch(url):
     return result.stdout
 
 
+# Gutenberg's licence trailer sits after the "*** END OF THE PROJECT GUTENBERG
+# EBOOK ... ***" marker. It has to be cut structurally rather than by keyword:
+# paragraphs like "Some states do not allow disclaimers of certain implied
+# warranties..." contain none of SKIP_PHRASES, so they survived the filter and
+# were harvested as quotes. Worse, sitting past the last story heading, they
+# were assigned to whichever story came last in the book (all four that reached
+# the live corpus were attributed to "The Copper Beeches").
+#
+# Only the tail is removed. The front matter is left alone so that the offsets
+# segment() and assign_stories() work with are unchanged.
+END_MARKER = re.compile(r'\*\*\*\s*END OF (THE|THIS) PROJECT GUTENBERG', re.I)
+
+
+def strip_gutenberg_trailer(text):
+    """Drop everything from the Gutenberg end-marker onwards."""
+    m = END_MARKER.search(text)
+    return text[:m.start()] if m else text
+
+
 def clean_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
     # Normalise curly apostrophes and quotes to straight
@@ -416,7 +435,7 @@ def main():
     for title, url in BOOKS:
         print(f'Fetching: {title}...', end=' ', flush=True)
         try:
-            text = fetch(url)
+            text = strip_gutenberg_trailer(fetch(url))
         except RuntimeError as e:
             print(f'FAILED ({e})')
             continue
