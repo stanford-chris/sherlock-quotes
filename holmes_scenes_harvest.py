@@ -118,7 +118,10 @@ def derive_story(subcat_title):
     name = subcat_title.replace('Category:', '').strip()
     if SKIP_SUBCAT.search(name):
         return None
-    m = re.search(r"Illustrations from ['\"]?(.+?)['\"]?,? by ", name)
+    # "Illustrations from" with an "of" variant: Commons is inconsistent, and
+    # the "of" spelling hid the entire Norwood Builder subcategory (14 files,
+    # 7 of them keepable Strand pages) until 22 Jul 2026.
+    m = re.search(r"Illustrations (?:from|of) ['\"]?(.+?)['\"]?,? by ", name)
     if m:
         return m.group(1).strip()
     # Bare story categories, e.g. "The Adventure of the Beryl Coronet"
@@ -183,6 +186,10 @@ NON_ILLUSTRATOR_RE = re.compile(
     r'\b(a\.?\s*)?conan\s+doyle\b|\barthur\b|\bdoyle\b|\bnewnes\b|\bpublisher\b'
     r'|\bstrand\b|\bmagazine\b|unknown|\banonymous\b|\bn/?a\b|\bs\.?\s*p\.?\b'
     r'|\bgeorge\b|\bltd\b|\boriginal\b|\bauthor\b|\bscan\b|\buser\b'
+    # Role labels: "Illustrator: Unknown" must not read as a person called
+    # Illustrator (it cost a keepable 784x824 Norwood scene). A label followed
+    # by a real name still rejects — only the label itself is stripped.
+    r'|\b(editor|illustrator|artist|engraver)\b'
     # Stopwords, so a leftover "The" is not mistaken for a surname.
     r'|\b(the|and|for|from|via|out|its|his|her)\b', re.I)
 
