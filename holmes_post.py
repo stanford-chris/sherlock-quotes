@@ -26,6 +26,7 @@ from pathlib import Path
 
 from atproto import Client, client_utils, models
 
+import image_alt
 import net_guard
 
 QUOTES_FILE  = Path(__file__).parent / 'holmes_quotes.json'
@@ -34,6 +35,13 @@ STATE_FILE   = Path(__file__).parent / 'holmes_state.json'
 
 HANDLE           = 'sherlockquotes.bsky.social'
 KEYCHAIN_SERVICE = 'holmesbot-bluesky'
+
+# Shared with the other bots on this machine: one long-lived `claude setup-token`
+# rather than the interactive login's short-lived token, which expires intra-day
+# and 401s a headless launchd run. Used only to describe the illustration for
+# alt text, so its absence degrades the alt and never blocks the post.
+CLAUDE_TOKEN_ACCOUNT = 'seoulbot'
+CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
 DRY_RUN          = '--dry-run' in sys.argv
 
 MAX_CHARS = 290  # 10-char buffer under Bluesky's 300 limit
@@ -130,6 +138,23 @@ STORY_EMOJI = {_story_key(k): v for k, v in {
     'The Adventure of Shoscombe Old Place':        '🏇',
     'The Adventure of the Retired Colourman':      '🎨',
 }.items()}
+
+def claude_env():
+    """Env for the `claude -p` subprocess used to describe the illustration.
+
+    Injects the long-lived Keychain token as CLAUDE_CODE_OAUTH_TOKEN when one is
+    stored, and otherwise falls back to the ambient environment so a manual run
+    with a logged-in CLI still works.
+    """
+    env = os.environ.copy()
+    r = subprocess.run(
+        ['security', 'find-generic-password',
+         '-a', CLAUDE_TOKEN_ACCOUNT, '-s', CLAUDE_TOKEN_SERVICE, '-w'],
+        capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        env['CLAUDE_CODE_OAUTH_TOKEN'] = r.stdout.strip()
+    return env
+
 
 def keychain_password(account, service):
     result = subprocess.run(
@@ -440,9 +465,9 @@ def main():
         label = candidate.get('story') or candidate.get('book') or candidate.get('credit_name')
         print(f'Trying: {label} [{candidate.get("source")}]')
         print(f'  URL:  {candidate["image_url"]}')
-        if DRY_RUN:
-            image_entry = candidate
-            break
+        # A dry run used to stop at the URL and never download. Now that alt
+        # text is generated FROM the image, skipping the fetch would leave the
+        # part most worth reviewing unreviewable, so a dry run fetches too.
         try:
             image_bytes = fetch_image(candidate['image_url'])
             image_entry = candidate
@@ -471,15 +496,34 @@ def main():
         print(f'\nPost 1 ({len(post1.build_text())} chars):\n{"-"*40}\n{post1.build_text()}')
         print(f'\nPost 2 ({len(post2.build_text())} chars):\n{"-"*40}\n{post2.build_text()}\n{"-"*40}')
 
+    # Alt text describes the SCENE, with attribution as a short tail.
+    #
+    # Until August 2026 the alt was attribution alone: who drew it and where it
+    # appeared. That tells a blind reader nothing about the illustration, and
+    # the story name it carried was already in the post. The non-Paget branch
+    # was worse still, an identical fixed string on every such post.
+    #
+    # image_alt.describe() shows the model the actual illustration. Best-effort:
+    # any failure falls back to the attribution string, which is a truthful
+    # caption even if a poor description, so a post never fails over alt text.
+    subj = ''
+    if image_entry.get('source') == 'strand':
+        subj = image_entry.get('story') or image_entry.get('book') or 'the Sherlock Holmes stories'
+        attribution = f'Sidney Paget illustration for {subj}, from The Strand Magazine.'
+    else:
+        attribution = 'Victorian illustration from the British Library Mechanical Curator collection.'
+
+    context = ' / '.join(p for p in (image_entry.get('title', ''), subj) if p)
+    desc = image_alt.describe(image_bytes, context=context, env=claude_env())
+    alt_text = f'{desc} {attribution}' if desc else attribution
+    print(f'\nAlt ({len(alt_text)} chars):\n{"-"*40}\n{alt_text}\n{"-"*40}')
+
+    # The dry run stops HERE rather than before the alt is built. Alt text
+    # became generated content in August 2026, so previewing a post without it
+    # would leave the half most worth checking unreviewed.
     if DRY_RUN:
         print('(dry run -- not posting)')
         return
-
-    if image_entry.get('source') == 'strand':
-        subj = image_entry.get('story') or image_entry.get('book') or 'the Sherlock Holmes stories'
-        alt_text = f'Sidney Paget illustration for {subj}, from The Strand Magazine.'
-    else:
-        alt_text = 'Victorian illustration from the British Library Mechanical Curator collection.'
 
     # Post to Bluesky -- quote with image, then attribution as reply
     password = keychain_password(HANDLE, KEYCHAIN_SERVICE)
