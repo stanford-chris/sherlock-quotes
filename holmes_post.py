@@ -27,11 +27,16 @@ from pathlib import Path
 from atproto import Client, client_utils, models
 
 import image_alt
+import alt_log
 import net_guard
 
 QUOTES_FILE  = Path(__file__).parent / 'holmes_quotes.json'
 IMAGES_FILE  = Path(__file__).parent / 'holmes_scenes.json'
 STATE_FILE   = Path(__file__).parent / 'holmes_state.json'
+# One JSONL line per posted quote, recording the alt text that shipped and
+# whether it was generated or fell back. Written only on a real post, and
+# best-effort: see alt_log.
+ALT_LOG      = Path(__file__).parent / 'alt_history.jsonl'
 
 HANDLE           = 'sherlockquotes.bsky.social'
 KEYCHAIN_SERVICE = 'holmesbot-bluesky'
@@ -42,7 +47,39 @@ KEYCHAIN_SERVICE = 'holmesbot-bluesky'
 # alt text, so its absence degrades the alt and never blocks the post.
 CLAUDE_TOKEN_ACCOUNT = 'seoulbot'
 CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
+
+# Refuse anything unrecognised. Until August 2026 this was a bare membership
+# test, so an unknown flag (`--help` above all) fell through to a LIVE post:
+# the same trap that published a real thread from seoul-index on 20 Jul 2026.
+_KNOWN_ARGS = {'--dry-run', '--tail'}
+
+
+def _tail_n(argv):
+    """N for `--tail [N]` (print recent alt text and exit), or None if absent.
+    N defaults to 10 and a bare integer right after --tail overrides it."""
+    if '--tail' not in argv:
+        return None
+    i = argv.index('--tail')
+    if i + 1 < len(argv) and argv[i + 1].isdigit():
+        return max(1, int(argv[i + 1]))
+    return 10
+
+
+if __name__ == '__main__':
+    _skip = None
+    if '--tail' in sys.argv:
+        _t = sys.argv.index('--tail')
+        if _t + 1 < len(sys.argv) and sys.argv[_t + 1].isdigit():
+            _skip = _t + 1
+    _unknown = [a for j, a in enumerate(sys.argv[1:], 1)
+                if a not in _KNOWN_ARGS and j != _skip]
+    if _unknown:
+        sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
+                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))} [N]. '
+                 f'Refusing to run (a bare run posts live).')
+
 DRY_RUN          = '--dry-run' in sys.argv
+TAIL_N           = _tail_n(sys.argv)
 
 MAX_CHARS = 290  # 10-char buffer under Bluesky's 300 limit
 
@@ -431,6 +468,12 @@ def fetch_image(url):
 
 
 def main():
+    # --tail is a read-only viewer: print recent alt text and exit before the
+    # quote pool, the network or any post. Never touches state.
+    if TAIL_N is not None:
+        alt_log.tail(ALT_LOG, TAIL_N)
+        return
+
     quotes = json.loads(QUOTES_FILE.read_text())
     images = json.loads(IMAGES_FILE.read_text())
     state  = load_state()
@@ -531,7 +574,7 @@ def main():
     bsky.login(HANDLE, password)
 
     if single:
-        bsky.send_images(
+        response = bsky.send_images(
             text=combined,
             images=[image_bytes],
             image_alts=[alt_text],
@@ -549,6 +592,20 @@ def main():
         )
 
     print('Posted successfully.')
+
+    # Record what shipped. `generated` is the flag worth watching: a failed
+    # model call falls back to the attribution string silently by design, which
+    # keeps posts going out and makes a run of failures invisible. A tail
+    # showing every recent post falling back means the description step is
+    # broken, not that the illustrations resist description.
+    alt_log.append(ALT_LOG, {
+        'at': datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S'),
+        'id': qid,
+        'title': story or book,
+        'url': alt_log.post_url(HANDLE, getattr(response, 'uri', None)),
+        'generated': desc is not None,
+        'alts': [alt_text],
+    })
 
     # Mark quote as posted (keyed by stable id, not array index)
     posted_ids.add(qid)
