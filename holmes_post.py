@@ -26,6 +26,8 @@ from pathlib import Path
 
 from atproto import Client, client_utils, models
 
+import net_guard
+
 QUOTES_FILE  = Path(__file__).parent / 'holmes_quotes.json'
 IMAGES_FILE  = Path(__file__).parent / 'holmes_scenes.json'
 STATE_FILE   = Path(__file__).parent / 'holmes_state.json'
@@ -414,6 +416,11 @@ def main():
     if quote_entry is None:
         print('All quotes have been posted. Reset holmes_state.json to restart.')
         sys.exit(0)
+
+    # Daily, so half an hour of waiting is free, and the rest of the run needs
+    # the network throughout. Gated after the quote pick above, which is local
+    # and would otherwise burn the wait only to find nothing left to post.
+    net_guard.require_network(1800)
 
     quote   = quote_entry['quote']
     qid     = quote_id(quote)
