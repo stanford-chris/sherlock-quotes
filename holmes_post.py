@@ -558,7 +558,10 @@ def main():
 
     context = ' / '.join(p for p in (image_entry.get('title', ''), subj) if p)
     desc = image_alt.describe(image_bytes, context=context, env=claude_env())
-    alt_text = f'{desc} {attribution}' if desc else attribution
+    # The disclosure rides the generated branch only: the attribution fallback
+    # is a human statement of provenance, not model output.
+    alt_text = (f'{image_alt.DISCLOSURE} {desc} {attribution}'
+                if desc else attribution)
     print(f'\nAlt ({len(alt_text)} chars):\n{"-"*40}\n{alt_text}\n{"-"*40}')
 
     # The dry run stops HERE rather than before the alt is built. Alt text
