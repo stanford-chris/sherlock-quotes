@@ -32,6 +32,9 @@ import net_guard
 
 QUOTES_FILE  = Path(__file__).parent / 'holmes_quotes.json'
 IMAGES_FILE  = Path(__file__).parent / 'holmes_scenes.json'
+# Victorian British photographs: the art for every quote whose own work Paget
+# never illustrated, which is 76% of the pool. See load_photos and pick_images.
+PHOTOS_FILE  = Path(__file__).parent / 'holmes_images.json'
 STATE_FILE   = Path(__file__).parent / 'holmes_state.json'
 # One JSONL line per posted quote, recording the alt text that shipped and
 # whether it was generated or fell back. Written only on a real post, and
@@ -237,41 +240,18 @@ def is_complete_quote(text):
     )
 
 
-# Share of posts drawn from quotes whose own work has a Paget scene. Measured
-# 22 Jul 2026: 506 of 2,230 postable quotes (23%) share a work with a scene —
-# 299 of them from The Hound of the Baskervilles alone — and an unbiased draw
-# lands on one ~21% of the time. The bias lifts truly-matched posts to ~47%,
-# and the draw is flattened BY WORK first (one work, then one quote within
-# it), because a uniform draw over matched quotes would be ~60% Hound and
-# turn the feed into a Hound account.
-MATCHED_ART_BIAS = 1 / 3
-
-
-def _matched_story_keys(images):
-    """Fuzzy keys of every story that has its own Strand Paget scene."""
-    return {_match_key(s['story']) for s in images
-            if s.get('source') == 'strand' and s.get('story')}
-
-
-def pick_quote(quotes, posted_ids, images=None):
+def pick_quote(quotes, posted_ids):
     unposted = [
         q for q in quotes
         if quote_id(q['quote']) not in posted_ids and is_complete_quote(q['quote'])
     ]
     if not unposted:
         return None
-    # Matched-art bias: sometimes restrict the draw to quotes whose story (or,
-    # for the novels, whose book) has its own scene, so pick_images finds a
-    # true match. Falls through unbiased once the matched sliver is exhausted.
-    if images and random.random() < MATCHED_ART_BIAS:
-        keys = _matched_story_keys(images)
-        by_work = {}
-        for q in unposted:
-            k = _match_key(q.get('story') or q.get('book'))
-            if k in keys:
-                by_work.setdefault(k, []).append(q)
-        if by_work:
-            unposted = by_work[random.choice(sorted(by_work))]
+    # No art bias. Until 18 Aug 2026 a third of draws were restricted to the
+    # 15 works Paget illustrated, to lift the share of posts whose art really
+    # was the scene. Photographs now cover every other work, so the reason is
+    # gone and the whole canon draws evenly again: the bias had been pulling
+    # the feed towards Hound, Adventures and Memoirs.
     # Dialogue is ~10% of the pool; post it 40% of the time to over-represent it for variety.
     dialogue = [q for q in unposted if q.get('speaker') != 'narrative']
     narrative = [q for q in unposted if q.get('speaker') == 'narrative']
@@ -304,44 +284,130 @@ def is_atmospheric(quote_text):
     return any(re.search(rf'\b{w}\b', lower) for w in ATMOSPHERE_WORDS)
 
 
-def pick_images(images, quote_entry, n=6):
-    """Ordered scene candidates for a quote: same story first, then same book,
-    then any Paget scene. Occasionally leads with a British Library 'ghoulish'
-    atmosphere scene when the quote is suitably eerie."""
-    strand = [s for s in images if s.get('source') == 'strand']
-    atmos  = [s for s in images if s.get('source') == 'british_library']
-    qbook  = quote_entry.get('book')
-    qstory = quote_entry.get('story')
+# The four novels are each a single work; a collection is an anthology of many,
+# so a quote or a scene tagged only with a collection has no known work.
+NOVELS = {
+    'A Study in Scarlet',
+    'The Sign of the Four',
+    'The Hound of the Baskervilles',
+    'The Valley of Fear',
+}
+
+
+def _work_key(story, book):
+    """Fuzzy key for the work a quote or scene belongs to: its story, or for
+    the four novels the novel itself. A collection entry carrying no story
+    returns None, so it never matches: 37 of the 225 Paget scenes are tagged
+    with a collection but no story, and treating those as work-level matches
+    would readmit exactly the cross-story art this rule exists to stop."""
+    if story:
+        return _match_key(story)
+    if book in NOVELS:
+        return _match_key(book)
+    return None
+
+
+# 'London' as a surname or a ship, not the city. The LOC name authority files
+# Jack London under the subject heading 'london, jack', so a subject match
+# alone lets his portraits through. Rep. Meyer London is the other repeat.
+_LONDON_NOT_THE_CITY = re.compile(
+    r"\blondon,\s*(?:jack|meyer)\b|\b(?:jack|meyer)\s+london\b", re.IGNORECASE)
+
+# Match 'london' except in 'New London' (Connecticut).
+_LONDON_RE = re.compile(r'(?<!new )london', re.IGNORECASE)
+
+
+def is_british(img):
+    """True if a LOC photo is confirmed British by its subject headings.
+
+    Subject headings only: they are structured authority terms and hold up.
+    Titles do not. Measured 18 Aug 2026 over the 2,955 non-stereo photos, 171
+    passed on their title alone and roughly four in five of those were duds:
+    trademark registrations for London-brand gin and hats, theatre bills for
+    London hits playing New York, Boston's 'London Honorables', the London
+    Hosiery Mills of Loudon, Tennessee, and East London, South Africa.
+    """
+    subjects = ' '.join(img.get('subjects', []))
+    if _LONDON_NOT_THE_CITY.search(subjects) or _LONDON_NOT_THE_CITY.search(img.get('title', '')):
+        return False
+    return 'england' in subjects.lower() or bool(_LONDON_RE.search(subjects))
+
+
+def clean_image_title(title):
+    """Strip redundant ', England' when London is already in the title."""
+    if re.search(r'\blondon\b', title, re.IGNORECASE):
+        title = re.sub(r',?\s*England', '', title, flags=re.IGNORECASE).strip()
+    return title
+
+
+def load_photos(path):
+    """Victorian British photographs from the Library of Congress, normalised
+    into a scene entry's shape so the credit and alt-text paths branch on
+    nothing but `source`.
+
+    Stereo cards and panoramas are dropped: both are very wide and render
+    badly at Bluesky's aspect ratios. The British filter is is_british. Yield
+    on 18 Aug 2026: 5,339 harvested to 797 usable, dated 1870s to 1910s and
+    concentrated in the 1890s and 1900s.
+    """
+    if not path.exists():
+        return []
+    photos = []
+    for img in json.loads(path.read_text()):
+        if any('stereo' in s.lower() for s in img.get('subjects', [])):
+            continue
+        url = img.get('image_url', '')
+        if '/stereo/' in url or '/pan/' in url:
+            continue
+        if not is_british(img):
+            continue
+        photos.append({
+            **img,
+            'source': 'loc',
+            'story': None,
+            'book': None,
+            'credit_name': 'Library of Congress',
+            'page_url': img.get('id', ''),
+            'title': clean_image_title(img.get('title', '')),
+        })
+    return photos
+
+
+def pick_images(scenes, photos, quote_entry, n=6):
+    """Ordered art candidates for a quote: Paget when he illustrated the quote's
+    own work, a photograph otherwise.
+
+    The Strand pool is 225 illustrations covering 15 works. Until 18 Aug 2026
+    the unmatched majority fell through to art from a *different* story,
+    labelled honestly but still not the scene the quote came from.
+    Measured that day over the 2,470-quote pool: 593 quotes (24%) have art for
+    their own work; the remaining 1,877 (76%) do not, and 1,392 of those come
+    from the five books with no Paget art here at all (The Valley of Fear,
+    A Study in Scarlet, The Case-Book, His Last Bow, The Sign of the Four).
+    """
+    strand = [s for s in scenes if s.get('source') == 'strand']
+    atmos  = [s for s in scenes if s.get('source') == 'british_library']
+
+    key = _work_key(quote_entry.get('story'), quote_entry.get('book'))
+    if key:
+        matched = [s for s in strand
+                   if _work_key(s.get('story'), s.get('book')) == key]
+        if matched:
+            random.shuffle(matched)
+            return matched[:n]
 
     candidates = []
-
-    # Occasional atmosphere lead-in for eerie quotes
+    # Atmosphere art leads for a suitably eerie quote. Inert as things stand:
+    # INCLUDE_ATMOSPHERE is False in the scenes harvester, so the pool holds no
+    # british_library entries and this branch never fires.
     if atmos and is_atmospheric(quote_entry['quote']) and random.random() < 0.25:
         picks = atmos[:]
         random.shuffle(picks)
         candidates.extend(picks[:2])
 
-    # Same story (fuzzy match)
-    if qstory:
-        sk = _match_key(qstory)
-        matched = [s for s in strand if s.get('story') and _match_key(s['story']) == sk]
-        random.shuffle(matched)
-        candidates.extend(matched)
-
-    # Same book
-    if qbook:
-        matched = [s for s in strand if s.get('book') == qbook and s not in candidates]
-        random.shuffle(matched)
-        candidates.extend(matched)
-
-    # Any Paget scene, then any atmosphere scene as last resort
-    rest = [s for s in strand if s not in candidates]
+    rest = [p for p in photos if p not in candidates]
     random.shuffle(rest)
     candidates.extend(rest)
-    rest2 = [s for s in atmos if s not in candidates]
-    random.shuffle(rest2)
-    candidates.extend(rest2)
-
     return candidates[:n]
 
 
@@ -371,27 +437,6 @@ def build_post1(quote):
     return tb
 
 
-def scene_source_note(book, story, image_entry):
-    """A parenthetical naming the illustration's own story when it is not the
-    quote's. Only ~23% of postable quotes share a work with any Paget scene
-    (measured 22 Jul 2026: 506 of 2,230, of which 299 are Hound; 56% of quotes
-    have no same-book scene at all), so most posts carry cross-story art; name
-    it honestly rather than presenting it as the scene. A scene whose story is unknown but whose book differs is named by
-    its book; a scene with no book/story metadata (atmosphere art) gets no
-    note."""
-    img_story = image_entry.get('story')
-    img_book = image_entry.get('book')
-    if not (img_story or img_book):
-        return ''
-    quote_key = _match_key(story) if story else _match_key(book)
-    img_key = _match_key(img_story) if img_story else _match_key(img_book)
-    if quote_key and img_key == quote_key:
-        return ''
-    if img_story:
-        return f' (from “{img_story}”)'
-    return f' (from {img_book})'
-
-
 def append_attribution(tb, speaker, book, story, image_entry):
     """Append the attribution + photo credit to an existing TextBuilder."""
     book_url, book_emoji = BOOK_META.get(book, (None, '\U0001f4da'))
@@ -400,6 +445,8 @@ def append_attribution(tb, speaker, book, story, image_entry):
     emoji = STORY_EMOJI.get(_story_key(story), book_emoji) if story else book_emoji
     credit_name = image_entry.get('credit_name', 'Wikimedia Commons')
     page_url = image_entry.get('page_url', '')
+    # Pen nib for a Paget illustration, camera for a photograph.
+    credit_emoji = '\U0001f4f7' if image_entry.get('source') == 'loc' else '\u2712\ufe0f'
 
     if speaker and speaker != 'narrative':
         full_name = SPEAKER_NAMES.get(speaker, speaker)
@@ -416,14 +463,16 @@ def append_attribution(tb, speaker, book, story, image_entry):
         tb.link(book, book_url)
     else:
         tb.text(book)
-    tb.text(f' {emoji}\n\n✒️ ')
+    tb.text(f' {emoji}\n\n{credit_emoji} ')
     if page_url:
         tb.link(credit_name, page_url)
     else:
         tb.text(credit_name)
-    note = scene_source_note(book, story, image_entry)
-    if note:
-        tb.text(note)
+    # Photographs carry their year. Illustration dates are book-level rather
+    # than per-image, so a Paget scene shows none.
+    img_date = image_entry.get('date')
+    if image_entry.get('source') == 'loc' and img_date:
+        tb.text(f' ({img_date})')
     # Hashtags as clickable facets, on their own line under the credit.
     if TAGS:
         tb.text('\n\n')
@@ -476,11 +525,12 @@ def main():
 
     quotes = json.loads(QUOTES_FILE.read_text())
     images = json.loads(IMAGES_FILE.read_text())
+    photos = load_photos(PHOTOS_FILE)
     state  = load_state()
     posted_ids = set(state.get('posted', []))
 
     # Pick quote
-    quote_entry = pick_quote(quotes, posted_ids, images)
+    quote_entry = pick_quote(quotes, posted_ids)
     if quote_entry is None:
         print('All quotes have been posted. Reset holmes_state.json to restart.')
         sys.exit(0)
@@ -499,13 +549,14 @@ def main():
     print(f'Quote [{qid}] ({speaker} / {story or book}):')
     print(f'  {quote}')
 
-    # Pick scene — same story, then same book, then any Paget scene
-    candidates = pick_images(images, quote_entry, n=6)
+    # Pick art: Paget when he illustrated this very work, a photograph otherwise
+    candidates = pick_images(images, photos, quote_entry, n=6)
 
     image_entry = None
     image_bytes = None
     for candidate in candidates:
-        label = candidate.get('story') or candidate.get('book') or candidate.get('credit_name')
+        label = (candidate.get('story') or candidate.get('book')
+                 or candidate.get('title') or candidate.get('credit_name'))
         print(f'Trying: {label} [{candidate.get("source")}]')
         print(f'  URL:  {candidate["image_url"]}')
         # A dry run used to stop at the URL and never download. Now that alt
@@ -553,10 +604,19 @@ def main():
     if image_entry.get('source') == 'strand':
         subj = image_entry.get('story') or image_entry.get('book') or 'the Sherlock Holmes stories'
         attribution = f'Sidney Paget illustration for {subj}, from The Strand Magazine.'
+    elif image_entry.get('source') == 'loc':
+        title = image_entry.get('title', '')
+        date = image_entry.get('date')
+        attribution = (f'{title}, {date}. Library of Congress.' if date
+                       else f'{title}. Library of Congress.')
     else:
         attribution = 'Victorian illustration from the British Library Mechanical Curator collection.'
 
-    context = ' / '.join(p for p in (image_entry.get('title', ''), subj) if p)
+    # A photograph's LOC title is the whole of its context, and subj repeats it.
+    parts = [image_entry.get('title', '')]
+    if subj and subj != image_entry.get('title', ''):
+        parts.append(subj)
+    context = ' / '.join(p for p in parts if p)
     desc = image_alt.describe(image_bytes, context=context, env=claude_env())
     # The disclosure rides the generated branch only: the attribution fallback
     # is a human statement of provenance, not model output.
