@@ -231,11 +231,21 @@ def save_state(state):
     os.replace(tmp, STATE_FILE)
 
 
+# Shortest quote that can carry a post on its own. Lowered from 60 on 18 Aug
+# 2026 to unblock Holmes's shorter lines: at 60 the eligible dialogue pool was
+# 37 quotes, at 40 it is 127. The floor is deliberately not per-speaker, because
+# it does not need to be. Watson's narrative is harvested a paragraph at a time
+# (MIN_PROSE_LEN in holmes_harvest.py) and the shortest narrative quote in the
+# pool is 60 characters, so this bound only ever bites on dialogue. Going below
+# 40 buys nothing either: MIN_LEN in the harvester means no shorter span exists.
+MIN_QUOTE_LEN = 40
+
+
 def is_complete_quote(text):
     """True if the quote is a complete, standalone sentence."""
     return (
         text.endswith(('.', '!', '?'))
-        and len(text) >= 60
+        and len(text) >= MIN_QUOTE_LEN
         and text[0].isupper()
     )
 
