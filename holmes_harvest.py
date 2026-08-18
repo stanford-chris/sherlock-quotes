@@ -352,6 +352,9 @@ def _story_norm(s):
     (already run through clean_text) against a slice of source text."""
     s = s.replace('‘', "'").replace('’', "'")
     s = s.replace('“', '"').replace('”', '"')
+    # clean_text drops Gutenberg's underscore italics from the stored quote, so
+    # drop them from the source side too or the two can never match.
+    s = s.replace('_', '')
     return re.sub(r'\s+', ' ', s).strip()
 
 
@@ -464,7 +467,12 @@ def assign_stories(entries, text, book):
     spans = segment(text, book)
     nspans = [(t, _story_norm(text[s:e])) for (t, s, e) in spans]
     for e in entries:
-        nq = _story_norm(e['quote'])
+        # Match without the terminal mark. restore_terminal_stop puts back a
+        # full stop the source spells as the comma before the attribution, so
+        # the stored text is deliberately not a substring of the source. The
+        # source keeps whatever followed, so a query trimmed of its own final
+        # mark still matches, and trimming can only ever widen the match.
+        nq = _story_norm(e['quote']).rstrip('.!?')
         e['story'] = next((t for (t, ns) in nspans if nq in ns), None)
 
 
