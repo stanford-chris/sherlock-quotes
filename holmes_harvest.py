@@ -191,6 +191,12 @@ def clean_text(text):
     # Normalise curly apostrophes and quotes to straight
     text = text.replace('‘', "'").replace('’', "'")
     text = text.replace('“', '"').replace('”', '"')
+    # Drop Gutenberg's underscore italics. The transcriptions mark emphasis as
+    # _Daily Telegraph_, _Aurora_, _debris_, and dates as 16_th_; Bluesky posts
+    # are plain text, so the markup shipped literally to readers until 18 Aug
+    # 2026. Underscores never occur in Doyle's own prose, so strip them all
+    # rather than only matching pairs: an unpaired one is markup too.
+    text = text.replace('_', '')
     # Strip leading/trailing punctuation fragments
     text = text.strip(',-')
     return text.strip()
