@@ -210,24 +210,36 @@ def is_dialogue_para(para):
     return bool(re.search(r'[“\x22]', para))
 
 
-def restore_terminal_stop(raw):
+def restore_terminal_stop(para, m):
     """Clean a captured dialogue span, restoring the full stop Doyle's
-    attribution swallowed.
+    attribution swallowed, but only where the sentence really ended there.
 
-    Nearly all attributed speech in the canon is punctuated for the sentence it
-    sits in, not for the speech itself: `"...out of a dozen of the force," said
-    Holmes.` The pattern captures only what is inside the quotation marks, so the
-    span ends on that comma, and clean_text then strips it, leaving a line with
-    no terminal mark at all. holmes_post.is_complete_quote rejects those, which
-    is why only 16 of 239 dialogue quotes were ever postable and why the feed ran
-    45 consecutive narrative posts once those 16 were used up (measured 18 Aug
-    2026).
+    Attributed speech is punctuated for the sentence it sits in, not for the
+    speech: `"...out of a dozen of the force," Holmes remarked.` The pattern
+    captures only what is inside the quotation marks, so the span ends on that
+    comma and clean_text strips it, leaving no terminal mark. is_complete_quote
+    in holmes_post then rejects it, which is why only 16 of 239 dialogue quotes
+    were ever postable (measured 18 Aug 2026).
 
-    A comma there stands in for the full stop, so put one back. A span that ended
-    on a dash is interrupted speech and is deliberately left unterminated, so it
-    still fails the completeness test downstream."""
-    quote = clean_text(raw)
-    if quote and raw.rstrip().endswith(',') and not quote.endswith(('.', '!', '?')):
+    The comma alone does NOT license a full stop, because the same comma appears
+    when the sentence carries on past the attribution, in both of its forms:
+
+        "The main thing with people of that sort," said Holmes, as we sat in ...
+        "If you use the code which I have explained," said Holmes, "you will ..."
+
+    Restoring a stop there manufactures a fragment that reads complete and is
+    not. Of 461 comma-terminated spans in the canon only 212 genuinely end the
+    sentence, so the naive rule is wrong far more often than it is right.
+
+    The mark the pattern consumed after the attribution is the discriminator: a
+    full stop means the speech ended, anything else means it did not. Where the
+    pattern consumed no mark the case is ambiguous, so nothing is restored.
+    Interrupted speech ending on a dash likewise stays unterminated."""
+    quote = clean_text(m.group(1))
+    if (quote
+            and m.group(1).rstrip().endswith(',')
+            and not quote.endswith(('.', '!', '?'))
+            and para[m.end() - 1] == '.'):
         quote += '.'
     return quote
 
@@ -246,7 +258,7 @@ def extract_dialogue(text, book_title):
         for name, patterns in DIALOGUE_PATTERNS.items():
             for pattern in patterns:
                 for m in pattern.finditer(para):
-                    quote = restore_terminal_stop(m.group(1))
+                    quote = restore_terminal_stop(para, m)
                     if MIN_LEN <= len(quote) <= MAX_LEN and quote not in seen:
                         if not should_skip(quote):
                             seen.add(quote)
