@@ -210,6 +210,28 @@ def is_dialogue_para(para):
     return bool(re.search(r'[“\x22]', para))
 
 
+def restore_terminal_stop(raw):
+    """Clean a captured dialogue span, restoring the full stop Doyle's
+    attribution swallowed.
+
+    Nearly all attributed speech in the canon is punctuated for the sentence it
+    sits in, not for the speech itself: `"...out of a dozen of the force," said
+    Holmes.` The pattern captures only what is inside the quotation marks, so the
+    span ends on that comma, and clean_text then strips it, leaving a line with
+    no terminal mark at all. holmes_post.is_complete_quote rejects those, which
+    is why only 16 of 239 dialogue quotes were ever postable and why the feed ran
+    45 consecutive narrative posts once those 16 were used up (measured 18 Aug
+    2026).
+
+    A comma there stands in for the full stop, so put one back. A span that ended
+    on a dash is interrupted speech and is deliberately left unterminated, so it
+    still fails the completeness test downstream."""
+    quote = clean_text(raw)
+    if quote and raw.rstrip().endswith(',') and not quote.endswith(('.', '!', '?')):
+        quote += '.'
+    return quote
+
+
 def extract_dialogue(text, book_title):
     """Extract attributed dialogue for all tracked characters."""
     entries = []
@@ -224,7 +246,7 @@ def extract_dialogue(text, book_title):
         for name, patterns in DIALOGUE_PATTERNS.items():
             for pattern in patterns:
                 for m in pattern.finditer(para):
-                    quote = clean_text(m.group(1))
+                    quote = restore_terminal_stop(m.group(1))
                     if MIN_LEN <= len(quote) <= MAX_LEN and quote not in seen:
                         if not should_skip(quote):
                             seen.add(quote)
