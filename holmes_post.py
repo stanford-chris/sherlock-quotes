@@ -313,6 +313,23 @@ def _work_key(story, book):
 _LONDON_NOT_THE_CITY = re.compile(
     r"\blondon,\s*(?:jack|meyer)\b|\b(?:jack|meyer)\s+london\b", re.IGNORECASE)
 
+# LOC subject terms for media that are not photographs. The pool is harvested
+# by place rather than by medium, so it carries etchings, lithographs, drawings,
+# coins and gallery reproductions of paintings alongside the photographs: 140 of
+# 797 when measured 18 Aug 2026, about one post in seven. Each would ship under
+# a camera credit, in the lane this bot reserves for photographs, contradicting
+# both the credit line and the profile. Paget already holds the illustration
+# lane; an 1890s etching of New Oxford Street is good art, but not here.
+#
+# Bare 'prints' is safe to exclude on: it never co-occurs with a photographic
+# format term in this pool, so it is a medium in its own right, not a parent of
+# 'photographic prints'.
+NOT_A_PHOTOGRAPH = {
+    'coins', 'drawings', 'engravings', 'etchings', 'illustrations', 'lithographs',
+    'manuscripts', 'medals', 'paintings', 'posters', 'prints', 'reproductions',
+    'sculpture', 'woodcuts',
+}
+
 # Match 'london' except in 'New London' (Connecticut).
 _LONDON_RE = re.compile(r'(?<!new )london', re.IGNORECASE)
 
@@ -346,9 +363,10 @@ def load_photos(path):
     nothing but `source`.
 
     Stereo cards and panoramas are dropped: both are very wide and render
-    badly at Bluesky's aspect ratios. The British filter is is_british. Yield
-    on 18 Aug 2026: 5,339 harvested to 797 usable, dated 1870s to 1910s and
-    concentrated in the 1890s and 1900s.
+    badly at Bluesky's aspect ratios. Non-photographic media are dropped too,
+    see NOT_A_PHOTOGRAPH. The British filter is is_british. Yield on 18 Aug
+    2026: 5,339 harvested to 657 usable, dated 1870s to 1910s and concentrated
+    in the 1890s and 1900s.
     """
     if not path.exists():
         return []
@@ -358,6 +376,8 @@ def load_photos(path):
             continue
         url = img.get('image_url', '')
         if '/stereo/' in url or '/pan/' in url:
+            continue
+        if NOT_A_PHOTOGRAPH & set(img.get('subjects', [])):
             continue
         if not is_british(img):
             continue
