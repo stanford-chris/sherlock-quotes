@@ -618,9 +618,19 @@ def main():
         parts.append(subj)
     context = ' / '.join(p for p in parts if p)
     desc = image_alt.describe(image_bytes, context=context, env=claude_env())
-    # The disclosure rides the generated branch only: the attribution fallback
-    # is a human statement of provenance, not model output.
-    alt_text = (f'{image_alt.DISCLOSURE} {desc} {attribution}'
+    # Attribution FIRST, then the disclosure, then the description.
+    #
+    # Until 18 Aug 2026 the disclosure led the whole string and the attribution
+    # trailed it, so a listener heard "A.I.-generated description." as a header
+    # over everything that followed, the Library of Congress's own catalogue
+    # title and date included. That labels a human-catalogued fact as model
+    # output, which is the exact inverse of what the disclosure is for. Leading
+    # with the attribution puts the trustworthy statement first and leaves the
+    # disclosure adjacent to the only text it covers.
+    #
+    # The disclosure still rides the generated branch only: with no description
+    # the alt is the attribution alone, which is human provenance throughout.
+    alt_text = (f'{attribution} {image_alt.DISCLOSURE} {desc}'
                 if desc else attribution)
     print(f'\nAlt ({len(alt_text)} chars):\n{"-"*40}\n{alt_text}\n{"-"*40}')
 
