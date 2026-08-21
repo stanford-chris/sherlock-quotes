@@ -321,5 +321,19 @@ def main():
     print(f'\nSaved {len(entries)} scenes to {OUTPUT}')
 
 
+# Refuse anything unrecognised before the flags below are read. Bare membership
+# tests silently ignore what they do not recognise, so a typo (`--stat`) or a
+# reflex (`--help`) reads as no flag at all and takes the ordinary path.
+# seoul-index published a real thread that way on 20 July 2026. The posting
+# bots in these repos were given this guard then; the harvest scripts were not,
+# which is what harden_audit.sh check 10 was still reporting on 21 August 2026.
+# Without the guard a typo runs a full harvest instead of printing stats.
+_KNOWN_ARGS = {'--stats'}
+
 if __name__ == '__main__':
+    _unknown = [a for a in sys.argv[1:] if a not in _KNOWN_ARGS]
+    if _unknown:
+        sys.exit(f'Unknown argument(s): {" ".join(_unknown)}. '
+                 f'Recognised: {" ".join(sorted(_KNOWN_ARGS))}. '
+                 f'Refusing to run.')
     main()
