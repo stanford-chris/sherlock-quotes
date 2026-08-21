@@ -40,6 +40,21 @@ python3 holmes_post.py             # post one quote + image
 python3 holmes_post.py --dry-run   # print the post without publishing
 ```
 
+## Avatar
+
+`avatar/make_avatar.py` draws the account's avatar: a cream "221B" on Strand Magazine
+blue, inside a single ruled ring.
+
+```sh
+python3 avatar/make_avatar.py            # writes avatar/avatar.png at 1024px
+python3 avatar/make_avatar.py --proof    # also writes the 40px feed-size proofs
+```
+
+It is drawn rather than photographed, and the script's docstring records the three
+measurements behind it: why one ring and not two, why Baskerville and not Georgia,
+and why the whole thing is rendered at 4x and downsampled. Setting it on the account
+is manual; the script only produces the file.
+
 ## Notes
 
 - The harvested data pools (`holmes_quotes.json`, `holmes_scenes.json`,
