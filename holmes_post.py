@@ -514,11 +514,13 @@ def append_attribution(tb, speaker, book, story, image_entry):
     # Pen nib for a Paget illustration, camera for a photograph.
     credit_emoji = '\U0001f4f7' if image_entry.get('source') == 'loc' else '\u2712\ufe0f'
 
+    # The work's emoji leads the line, exactly as the credit emoji leads the
+    # credit line below. No dash: the emoji does that job.
     if speaker and speaker != 'narrative':
         full_name = SPEAKER_NAMES.get(speaker, speaker)
-        tb.text(f'— {full_name}, ')
+        tb.text(f'{emoji} {full_name}, ')
     else:
-        tb.text('— ')
+        tb.text(f'{emoji} ')
     # Title: for a collection story, name the story in quotes and link it to the
     # collection; for the 4 novels (or an unlocated quote) link the book itself.
     if story:
@@ -529,7 +531,7 @@ def append_attribution(tb, speaker, book, story, image_entry):
         tb.link(book, book_url)
     else:
         tb.text(book)
-    tb.text(f' {emoji}\n\n{credit_emoji} ')
+    tb.text(f'\n\n{credit_emoji} ')
     if page_url:
         tb.link(credit_name, page_url)
     else:
