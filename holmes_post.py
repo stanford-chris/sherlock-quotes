@@ -403,9 +403,49 @@ def load_photos(path):
     return photos
 
 
-def pick_images(scenes, photos, quote_entry, n=6):
+# How many recently-used images to remember. Around two posts a day, so 150
+# holds a photograph off for roughly three months while still leaving ~470 of
+# the 657 fresh to draw from. Soft bound, never a hard filter: see _freshest.
+RECENT_IMAGES_MAX = 150
+
+
+def image_id(entry):
+    """Stable identity for an image, for the recently-used list. A LOC item id
+    and a Commons page URL are both permanent; image_url is the fallback."""
+    return entry.get('page_url') or entry.get('image_url') or entry.get('title', '')
+
+
+def _freshest(pool, recent):
+    """`pool` reordered so images never posted come first, shuffled among
+    themselves, and images already posted follow, least-recently-used first.
+
+    Added 22 Aug 2026. The bot kept no record of which art it had used, so
+    every draw was independent and a repeat was only ever a matter of odds.
+    It came due that morning: "London, The Royal Entrance to the Houses of
+    Lords" went out on 21 Aug at 09:00 and again on 22 Aug at 09:00, two of
+    three consecutive posts. One collision in six photograph-lane posts is
+    unlucky against a 657-image pool, but it is not rare in aggregate --
+    independent draws over a year of posting are expected to repeat about a
+    hundred times, and nothing here would ever have prevented one.
+
+    This never filters, it only reorders. Two of the sixteen Paget works hold a
+    single illustration (Beryl Coronet, Abbey Grange) and Silver Blaze holds
+    two, so a hard exclusion would leave those stories with no art at all
+    rather than with art seen before. Reusing the only picture there is, is
+    correct. Reusing one of 657 photographs a day apart is the bug.
+    """
+    rank = {img_id: i for i, img_id in enumerate(recent)}
+    fresh = [p for p in pool if image_id(p) not in rank]
+    stale = sorted((p for p in pool if image_id(p) in rank),
+                   key=lambda p: rank[image_id(p)])
+    random.shuffle(fresh)
+    return fresh + stale
+
+
+def pick_images(scenes, photos, quote_entry, n=6, recent=()):
     """Ordered art candidates for a quote: Paget when he illustrated the quote's
-    own work, a photograph otherwise.
+    own work, a photograph otherwise. Within either lane, art this bot has not
+    posted before comes first -- see _freshest.
 
     The Strand pool is 225 illustrations covering 15 works. Until 18 Aug 2026
     the unmatched majority fell through to art from a *different* story,
@@ -423,21 +463,17 @@ def pick_images(scenes, photos, quote_entry, n=6):
         matched = [s for s in strand
                    if _work_key(s.get('story'), s.get('book')) == key]
         if matched:
-            random.shuffle(matched)
-            return matched[:n]
+            return _freshest(matched, recent)[:n]
 
     candidates = []
     # Atmosphere art leads for a suitably eerie quote. Inert as things stand:
     # INCLUDE_ATMOSPHERE is False in the scenes harvester, so the pool holds no
     # british_library entries and this branch never fires.
     if atmos and is_atmospheric(quote_entry['quote']) and random.random() < 0.25:
-        picks = atmos[:]
-        random.shuffle(picks)
-        candidates.extend(picks[:2])
+        candidates.extend(_freshest(atmos, recent)[:2])
 
     rest = [p for p in photos if p not in candidates]
-    random.shuffle(rest)
-    candidates.extend(rest)
+    candidates.extend(_freshest(rest, recent))
     return candidates[:n]
 
 
@@ -558,6 +594,7 @@ def main():
     photos = load_photos(PHOTOS_FILE)
     state  = load_state()
     posted_ids = set(state.get('posted', []))
+    recent_images = list(state.get('recent_images', []))
 
     # Pick quote
     quote_entry = pick_quote(quotes, posted_ids)
@@ -580,7 +617,7 @@ def main():
     print(f'  {quote}')
 
     # Pick art: Paget when he illustrated this very work, a photograph otherwise
-    candidates = pick_images(images, photos, quote_entry, n=6)
+    candidates = pick_images(images, photos, quote_entry, n=6, recent=recent_images)
 
     image_entry = None
     image_bytes = None
@@ -713,6 +750,16 @@ def main():
     # Mark quote as posted (keyed by stable id, not array index)
     posted_ids.add(qid)
     state['posted'] = sorted(posted_ids)
+
+    # Remember the art, so the next run puts it behind everything unused.
+    # Recorded only after a successful post: a run that died at the Bluesky
+    # call shipped nothing, and burning the image for it would be a small
+    # silent leak out of the fresh pool. Any earlier use of the same image is
+    # dropped rather than left in place, so a duplicate entry can never hold a
+    # slot at the stale end of the list while the image is in fact the newest.
+    used = image_id(image_entry)
+    recent_images = [i for i in recent_images if i != used] + [used]
+    state['recent_images'] = recent_images[-RECENT_IMAGES_MAX:]
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
     save_state(state)
     remaining = sum(1 for q in quotes if quote_id(q['quote']) not in posted_ids)
