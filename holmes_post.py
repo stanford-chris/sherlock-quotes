@@ -596,15 +596,46 @@ def format_quote(quote):
     return '“' + typographic(quote) + '”'
 
 
-def build_post1(quote):
-    """Post 1: just the quote."""
-    tb = CurlyTextBuilder()
-    tb.text(format_quote(quote))
+def append_tags(tb):
+    """Append the hashtags as clickable facets on their own line."""
+    if not TAGS:
+        return tb
+    tb.text('\n\n')
+    for i, (display, tag) in enumerate(TAGS):
+        if i:
+            tb.text(' ')
+        tb.tag('#' + display, tag)
     return tb
 
 
-def append_attribution(tb, speaker, book, story, image_entry):
-    """Append the attribution + photo credit to an existing TextBuilder."""
+def build_post1(quote):
+    """Post 1 of the over-length fallback: the quote, then the hashtags.
+
+    ⛔ The tags belong HERE and not on post 2 alone. Post 1 is the top-level
+    post and post 2 is a reply, and hashtag feed generators index top-level
+    posts only: checked 23 August 2026 against the #History feed (100 items)
+    and the largest Photography feed (69 items), and neither carried a single
+    reply among them. Until this changed, every threaded post put its one tag
+    on the one post no feed would ever read -- 12 of the last 68 top-level
+    posts, 18 percent of the feed, discoverable by nobody. build_post2 no
+    longer carries them, so the thread shows the tag once.
+
+    Length is safe but not roomy: the longest quote in the 2,471-entry pool
+    renders at 262 characters and the tag line costs 17, giving 279 against
+    MAX_CHARS of 290. A re-harvest that lengthens the pool needs re-checking.
+    """
+    tb = CurlyTextBuilder()
+    tb.text(format_quote(quote))
+    return append_tags(tb)
+
+
+def append_attribution(tb, speaker, book, story, image_entry, tags=True):
+    """Append the attribution + photo credit to an existing TextBuilder.
+
+    `tags` is False for the threaded reply alone: the tags moved to post 1,
+    which is the only post of a thread any feed will index, and repeating them
+    one post later would show the same hashtag twice in two consecutive posts
+    for no discovery gain."""
     book_url, book_emoji = BOOK_META.get(book, (None, '\U0001f4da'))
     # A collection story uses its own emoji; novels and unmapped/story-less
     # quotes fall back to the collection emoji.
@@ -642,18 +673,16 @@ def append_attribution(tb, speaker, book, story, image_entry):
     if image_entry.get('source') == 'loc' and img_date:
         tb.text(f' ({img_date})')
     # Hashtags as clickable facets, on their own line under the credit.
-    if TAGS:
-        tb.text('\n\n')
-        for i, (display, tag) in enumerate(TAGS):
-            if i:
-                tb.text(' ')
-            tb.tag('#' + display, tag)
+    if tags:
+        append_tags(tb)
     return tb
 
 
 def build_post2(speaker, book, story, image_entry):
-    """Threaded reply: attribution + photo credit on their own post."""
-    return append_attribution(CurlyTextBuilder(), speaker, book, story, image_entry)
+    """Threaded reply: attribution + photo credit on their own post. No tags:
+    they ride post 1 now (see build_post1)."""
+    return append_attribution(CurlyTextBuilder(), speaker, book, story,
+                              image_entry, tags=False)
 
 
 def build_combined(quote, speaker, book, story, image_entry):
