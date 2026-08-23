@@ -489,16 +489,80 @@ SPEAKER_NAMES = {
 }
 
 
+def typographic(s):
+    """Curly quotes and apostrophes, which is the house style.
+
+    Applied to the leaf strings rather than to the finished post. TextBuilder
+    records each facet as a byte range into the text already emitted, and a
+    straight apostrophe is one byte where a curly one is three, so curling the
+    assembled string silently slides every link off the words it belongs to.
+    A URL is never passed through this, for the reason everylibrary exempts its
+    Commons filenames: a curled apostrophe in a path is a 404.
+
+    Adapted from everylibrary_post.py's typographic(), which is where the "'s"
+    guard below comes from. The digit guard is this bot's own: everylibrary's
+    corpus holds no elisions, and the Canon holds five opening-position
+    apostrophes that split both ways. "'89", "'95" and "'80's" are elided years
+    wanting a right quote; "'Look at the steps" and "'replaced it there,'" are
+    genuine nested quotations wanting a left one.
+    """
+    if not s:
+        return s or ''
+    out, prev = [], ' '
+    for i, ch in enumerate(s):
+        if ch == '"':
+            out.append('“' if prev in ' ([{\n' else '”')
+        elif ch == "'":
+            # WARNING: the "'s" guard is not hypothetical. See everylibrary,
+            # where "Thomas Jefferson 's Monticello" would otherwise read
+            # "Jefferson ‘s", worse than the straight apostrophe being fixed.
+            rest = s[i + 1:i + 3]
+            opening = prev in ' ([{\n' and not (
+                rest[:1] == 's' and not rest[1:2].isalpha())
+            # An elided year or decade closes, never opens: the '80's.
+            if opening and rest[:1].isdigit():
+                opening = False
+            out.append('‘' if opening else '’')
+        else:
+            out.append(ch)
+        prev = ch
+    return ''.join(out)
+
+
+class CurlyTextBuilder(client_utils.TextBuilder):
+    """A TextBuilder that curls every string it renders.
+
+    This is the choke point, so house style holds no matter which field the
+    text came from: the quote body, a story title out of the pool, or a Library
+    of Congress catalogue title. Facets stay correct because the conversion
+    happens before each segment is measured, never on the assembled text.
+
+    tag() is deliberately NOT curled: a hashtag carries no quotes, and its
+    second argument is machine-parsed.
+    """
+
+    def text(self, text):
+        return super().text(typographic(text))
+
+    def link(self, text, url):
+        # The display text only. The URL is passed through exactly as stored.
+        return super().link(typographic(text), url)
+
+
 def format_quote(quote):
-    """Return quote text with curly apostrophes, wrapped in curly double quotes."""
-    quote = re.sub(r"(\w)'(\w)", lambda m: m.group(1) + '’' + m.group(2), quote)
-    quote = quote.replace("'", '’')
-    return '“' + quote + '”'
+    """Return the quote curled, wrapped in curly double quotes.
+
+    The curling happens BEFORE the wrapper goes on, and must: a quote opening
+    on a nested quotation ("'Look at the steps") would otherwise see the
+    wrapping left-double as its preceding character, read as closing, and ship
+    a right quote where a left one belongs.
+    """
+    return '“' + typographic(quote) + '”'
 
 
 def build_post1(quote):
     """Post 1: just the quote."""
-    tb = client_utils.TextBuilder()
+    tb = CurlyTextBuilder()
     tb.text(format_quote(quote))
     return tb
 
@@ -553,12 +617,12 @@ def append_attribution(tb, speaker, book, story, image_entry):
 
 def build_post2(speaker, book, story, image_entry):
     """Threaded reply: attribution + photo credit on their own post."""
-    return append_attribution(client_utils.TextBuilder(), speaker, book, story, image_entry)
+    return append_attribution(CurlyTextBuilder(), speaker, book, story, image_entry)
 
 
 def build_combined(quote, speaker, book, story, image_entry):
     """Single post: quote, then attribution + photo credit."""
-    tb = client_utils.TextBuilder()
+    tb = CurlyTextBuilder()
     tb.text(format_quote(quote))
     tb.text('\n\n')
     append_attribution(tb, speaker, book, story, image_entry)
@@ -699,8 +763,12 @@ def main():
     #
     # The disclosure still rides the generated branch only: with no description
     # the alt is the attribution alone, which is human provenance throughout.
-    alt_text = (f'{attribution} {image_alt.DISCLOSURE} {desc}'
-                if desc else attribution)
+    # Curled here rather than per-part: alt carries no facets, so the whole
+    # assembled string is safe to convert, and one call catches all three
+    # sources -- the LoC catalogue title, the story name and the model's own
+    # description, none of which was curled before 23 August 2026.
+    alt_text = typographic(f'{attribution} {image_alt.DISCLOSURE} {desc}'
+                           if desc else attribution)
     print(f'\nAlt ({len(alt_text)} chars):\n{"-"*40}\n{alt_text}\n{"-"*40}')
 
     # The dry run stops HERE rather than before the alt is built. Alt text
