@@ -65,7 +65,7 @@ MIN_CHARS = 20
 # an attribution string when describe() returns None, and that is a human
 # statement of who drew the picture and where it appeared. Labelling it would
 # be a false claim in the opposite direction.
-DISCLOSURE = 'A.I.-generated description.'
+DISCLOSURE = 'A.I.-generated description:'
 
 _PROMPT = """Write alt text for a blind reader of a social media post, describing the image ./{name}
 
