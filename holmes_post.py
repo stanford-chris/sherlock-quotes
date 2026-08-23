@@ -250,7 +250,30 @@ def is_complete_quote(text):
     )
 
 
-def pick_quote(quotes, posted_ids):
+# How many recently-posted works to hold off. At about two posts a day, 20
+# keeps a story out of the feed for roughly ten days. Sized against the pool's
+# real shape rather than by feel: the four novels are 51.5% of the eligible
+# quotes but only 4 of the 61 works, because the harvester takes Watson's
+# narrative a paragraph at a time and a novel is simply longer. A uniform draw
+# over quotes therefore gave The Hound of the Baskervilles 10.7% of posts, with
+# 44% of its appearances landing within five posts of the previous one
+# (measured 23 Aug 2026, 81 posts in). At a 20-post window that falls to 4.9%
+# and 6%. Soft bound, never a hard filter: see the graduated relax in
+# pick_quote.
+RECENT_WORKS_MAX = 20
+
+
+def work_of(entry):
+    """The work a quote belongs to, for the recently-posted list: its story, or
+    for the four novels the novel itself. Deliberately not _work_key, which
+    answers a different question (may Paget's art for this work be used) and
+    returns None for a collection entry carrying no story. Here two unrelated
+    quotes must never share a key, and only 2 of the 2,471 quotes lack a story
+    without being one of the novels."""
+    return entry.get('story') or entry['book']
+
+
+def pick_quote(quotes, posted_ids, recent_works=()):
     unposted = [
         q for q in quotes
         if quote_id(q['quote']) not in posted_ids and is_complete_quote(q['quote'])
@@ -266,8 +289,21 @@ def pick_quote(quotes, posted_ids):
     dialogue = [q for q in unposted if q.get('speaker') != 'narrative']
     narrative = [q for q in unposted if q.get('speaker') == 'narrative']
     if dialogue and (not narrative or random.random() < 0.4):
-        return random.choice(dialogue)
-    return random.choice(narrative)
+        lane = dialogue
+    else:
+        lane = narrative
+    # Hold off works posted recently, narrowing the window rather than dropping
+    # it when the lane cannot satisfy it. The dialogue lane is only 143 quotes
+    # spread over few works, so at full width it sometimes has no candidate at
+    # all; halving twice before giving up keeps some spacing there instead of
+    # none. The lane is chosen first, so this never disturbs the 40% dialogue
+    # share above.
+    recent = list(recent_works)
+    for width in (len(recent), len(recent) // 2, 2, 0):
+        fresh = [q for q in lane if work_of(q) not in recent[-width:]] if width else lane
+        if fresh:
+            break
+    return random.choice(fresh)
 
 
 def _match_key(s):
@@ -661,9 +697,10 @@ def main():
     state  = load_state()
     posted_ids = set(state.get('posted', []))
     recent_images = list(state.get('recent_images', []))
+    recent_works  = list(state.get('recent_works', []))
 
     # Pick quote
-    quote_entry = pick_quote(quotes, posted_ids)
+    quote_entry = pick_quote(quotes, posted_ids, recent_works)
     if quote_entry is None:
         print('All quotes have been posted. Reset holmes_state.json to restart.')
         sys.exit(0)
@@ -830,6 +867,14 @@ def main():
     used = image_id(image_entry)
     recent_images = [i for i in recent_images if i != used] + [used]
     state['recent_images'] = recent_images[-RECENT_IMAGES_MAX:]
+
+    # Same contract as the art above: recorded only after a successful post, and
+    # any earlier use of the work is dropped rather than left in place, so a
+    # duplicate entry can never hold a slot at the stale end of the list while
+    # the work is in fact the most recent one posted.
+    used_work = work_of(quote_entry)
+    recent_works = [w for w in recent_works if w != used_work] + [used_work]
+    state['recent_works'] = recent_works[-RECENT_WORKS_MAX:]
     state['last_success_at'] = datetime.now(timezone.utc).isoformat()
     save_state(state)
     remaining = sum(1 for q in quotes if quote_id(q['quote']) not in posted_ids)
