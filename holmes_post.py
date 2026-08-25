@@ -652,16 +652,20 @@ def append_attribution(tb, speaker, book, story, image_entry, tags=True):
         tb.text(f'{emoji} {full_name}, ')
     else:
         tb.text(f'{emoji} ')
-    # Title: for a collection story, name the story in quotes and link it to the
-    # collection; for the 4 novels (or an unlocated quote) link the book itself.
-    if story:
-        tb.text('“')
-        tb.link(story, book_url) if book_url else tb.text(story)
-        tb.text('”')
-    elif book_url:
-        tb.link(book, book_url)
-    else:
-        tb.text(book)
+    # Title: always in quotation marks, novel and short story alike. Print
+    # convention would italicise a novel and quote a story, but Bluesky has no
+    # italics, so the novels were going out bare and unmarked — his own habit is
+    # to quote a book title too. Changed 26 August 2026; before that only a
+    # collection story was quoted.
+    #
+    # Only the LINK TARGET differs: a collection story is named but linked to
+    # its collection, since Gutenberg publishes the collection rather than the
+    # individual story; a novel, or a quote located no finer than its book,
+    # links to the book itself.
+    title = story or book
+    tb.text('“')
+    tb.link(title, book_url) if book_url else tb.text(title)
+    tb.text('”')
     tb.text(f'\n\n{credit_emoji} ')
     if page_url:
         tb.link(credit_name, page_url)

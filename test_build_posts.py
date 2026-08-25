@@ -70,6 +70,58 @@ class WhereTheTagsLand(unittest.TestCase):
         self.assertLess(text.index('Library of Congress'), text.index('#'))
 
 
+class HowATitleIsNamed(unittest.TestCase):
+    """Every work title is quoted, novel and short story alike.
+
+    ⛔ The failure this pins is silent. Until 26 August 2026 only a collection
+    story was quoted and the four novels went out bare -- print convention, but
+    Bluesky has no italics, so a novel simply lost its marking and read as loose
+    text. Nothing asserted either behaviour, no comment explained it, and the
+    quote marks looked like a side effect of the two link branches rather than a
+    decision. A regression here produces a perfectly plausible post.
+    """
+
+    def _title_line(self, book, story):
+        tb = h.append_attribution(h.CurlyTextBuilder(), None, book, story, IMAGE)
+        return tb.build_text().split('\n')[0]
+
+    def test_a_novel_is_quoted(self):
+        for novel in h.NOVELS:
+            with self.subTest(novel=novel):
+                self.assertIn(f'\u201c{novel}\u201d', self._title_line(novel, None))
+
+    def test_a_collection_story_is_quoted(self):
+        line = self._title_line('The Return of Sherlock Holmes',
+                                'The Adventure of the Dancing Men')
+        self.assertIn('\u201cThe Adventure of the Dancing Men\u201d', line)
+
+    def test_a_quote_located_no_finer_than_its_collection_is_quoted(self):
+        line = self._title_line('The Return of Sherlock Holmes', None)
+        self.assertIn('\u201cThe Return of Sherlock Holmes\u201d', line)
+
+    def test_no_title_goes_out_bare(self):
+        """The shape of the old bug: a title sitting in the line unquoted."""
+        for book, story in [('The Valley of Fear', None),
+                            ('The Return of Sherlock Holmes', 'Silver Blaze')]:
+            with self.subTest(book=book, story=story):
+                line = self._title_line(book, story)
+                self.assertEqual(line.count('\u201c'), 1, line)
+                self.assertEqual(line.count('\u201d'), 1, line)
+
+    def test_the_link_covers_the_title_and_not_the_quote_marks(self):
+        """A curly quote inside the facet would put it in the link text."""
+        tb = h.append_attribution(h.CurlyTextBuilder(), None,
+                                  'The Sign of the Four', None, IMAGE)
+        raw = tb.build_text().encode('utf-8')
+        links = [f for f in tb.build_facets()
+                 if any(getattr(x, 'uri', '').startswith('https://www.gutenberg.org')
+                        for x in f.features)]
+        self.assertEqual(len(links), 1)
+        i = links[0].index
+        self.assertEqual(raw[i.byte_start:i.byte_end].decode('utf-8'),
+                         'The Sign of the Four')
+
+
 class Length(unittest.TestCase):
 
     def test_the_longest_quote_plus_the_tag_line_still_fits(self):
