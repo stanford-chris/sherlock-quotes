@@ -67,6 +67,9 @@ MIN_CHARS = 20
 # be a false claim in the opposite direction.
 DISCLOSURE = 'A.I.-generated description:'
 
+# The "UK English" line below is a deliberate exception to the house style's
+# American-spelling default (CLAUDE.md, 28 August 2026): this bot's subject
+# is Victorian Britain, so British spelling is the content-appropriate choice.
 _PROMPT = """Write alt text for a blind reader of a social media post, describing the image ./{name}
 
 Describe what is actually VISIBLE: the subject, the setting, the composition, any notable detail. One or two sentences, 40 words at most.
