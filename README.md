@@ -18,6 +18,7 @@ Four scripts. The three harvesters build the pools; `holmes_post.py` posts from 
 | `holmes_scenes_harvest.py` | Harvests Sidney Paget's Strand Magazine illustrations from Wikimedia Commons into `holmes_scenes.json`, tagged with the story and book each one illustrated. |
 | `holmes_post.py` | Picks an unposted quote, then its art: a Paget illustration when one exists for that quote's own story or novel, otherwise a Library of Congress photograph. Posts both to Bluesky. Posted-state is tracked in `holmes_state.json`. |
 | `holmes_images_harvest.py` | Harvests Victorian British photographs from the Library of Congress into `holmes_images.json`. This was the original image source, retired in July 2026 when the Paget pool arrived and brought back in August 2026 to cover the works Paget never illustrated. |
+| `image_alt.py` | Not run standalone — imported by `holmes_post.py`. Generates the alt text for each post's image via a separate model call shown only the image's pixels, never the caption, so it describes what is visible rather than paraphrasing provenance. The description is checked against the image before it ships (a further call locates each claim; an unverifiable one gets a single retry, then the description is dropped). Any failure along the way falls back to a plain citation-only alt rather than holding the post. |
 
 Harvesting shells out to `curl`; posting uses [`atproto`](https://pypi.org/project/atproto/).
 
@@ -29,6 +30,13 @@ pip install -r requirements.txt
 # Store the Bluesky app password in the macOS Keychain:
 security add-generic-password -a "sherlockquotes.bsky.social" -s "holmesbot-bluesky" -w
 ```
+
+`holmes_post.py` also shells out to the [`claude` CLI](https://docs.claude.com/en/docs/claude-code/overview)
+at runtime, to generate each image's alt text — it must be installed and
+authenticated on the machine that runs the bot. It reads a long-lived OAuth
+token from the macOS Keychain (`claude_env()`, service `claude-oauth-token`)
+when one is stored, falling back to the ambient environment otherwise, so a
+manual run under a logged-in CLI works without adding one.
 
 ## Usage
 
