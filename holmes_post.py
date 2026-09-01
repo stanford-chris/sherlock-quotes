@@ -21,10 +21,11 @@ import random
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atproto import Client, client_utils, models
+from atproto import Client, client_utils, exceptions, models
 
 import image_alt
 import alt_log
@@ -208,6 +209,34 @@ def keychain_password(account, service):
             f'  security add-generic-password -a "{account}" -s "{service}" -w'
         )
     return result.stdout.strip()
+
+
+def login_client(retries=4):
+    """Log in, retrying transient network failures at fire time.
+
+    Same fragility as the other launchd atproto bots: login() creates a
+    session and then calls getProfile to populate client.me, and that leg can
+    time out on a sub-ten-second network blip at the exact moment launchd
+    fires. See everylibrary_post.py's login_client() and
+    [[reference_bot_network_blip_retries]].
+
+    Only the login retries. A failed send_images is left to fail, because a
+    timeout there cannot distinguish a post that never landed from one that
+    landed with the response lost, and retrying the second case double-posts.
+    """
+    password = keychain_password(HANDLE, KEYCHAIN_SERVICE)  # outside the loop: a
+    last_error = None                                       # missing key is not transient
+    for attempt in range(retries):
+        try:
+            client = Client()
+            client.login(HANDLE, password)
+            return client
+        except exceptions.NetworkError as exc:
+            last_error = f'{type(exc).__name__}: {exc}'
+            print(f'Login attempt {attempt + 1}/{retries} failed ({last_error})')
+            if attempt + 1 < retries:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f'Could not log in to Bluesky after {retries} attempts: {last_error}')
 
 
 def quote_id(text):
@@ -849,9 +878,7 @@ def main():
         return
 
     # Post to Bluesky -- quote with image, then attribution as reply
-    password = keychain_password(HANDLE, KEYCHAIN_SERVICE)
-    bsky = Client()
-    bsky.login(HANDLE, password)
+    bsky = login_client()
 
     if single:
         response = bsky.send_images(
