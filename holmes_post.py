@@ -405,6 +405,16 @@ NOT_A_PHOTOGRAPH = {
     'sculpture', 'woodcuts',
 }
 
+# A manuscript reproduction is cataloged as a museum postcard, not tagged
+# 'manuscripts', so NOT_A_PHOTOGRAPH above misses it: found 5 Sep 2026 when the
+# Harley MS. 7368 Sir Thomas More page went out under a camera credit and its
+# alt text fell back to the bare LOC caption because image_alt.describe()
+# correctly refused to guess at the handwriting. Checked against all 5,339
+# harvested titles: 4 slip past the subject filter this way and all 4 match
+# this pattern; it produces zero false positives over the same pool.
+_MANUSCRIPT_TITLE = re.compile(
+    r'\bMS\.?\b|manuscript|handwriting|facsimile|autograph', re.IGNORECASE)
+
 # Match 'london' except in 'New London' (Connecticut).
 _LONDON_RE = re.compile(r'(?<!new )london', re.IGNORECASE)
 
@@ -439,9 +449,10 @@ def load_photos(path):
 
     Stereo cards and panoramas are dropped: both are very wide and render
     badly at Bluesky's aspect ratios. Non-photographic media are dropped too,
-    see NOT_A_PHOTOGRAPH. The British filter is is_british. Yield on 18 Aug
-    2026: 5,339 harvested to 657 usable, dated 1870s to 1910s and concentrated
-    in the 1890s and 1900s.
+    by subject (NOT_A_PHOTOGRAPH) and, for manuscript reproductions catalogued
+    as museum postcards, by title (_MANUSCRIPT_TITLE). The British filter is
+    is_british. Yield on 5 Sep 2026: 5,339 harvested to 654 usable, dated
+    1870s to 1910s and concentrated in the 1890s and 1900s.
     """
     if not path.exists():
         return []
@@ -453,6 +464,8 @@ def load_photos(path):
         if '/stereo/' in url or '/pan/' in url:
             continue
         if NOT_A_PHOTOGRAPH & set(img.get('subjects', [])):
+            continue
+        if _MANUSCRIPT_TITLE.search(img.get('title', '')):
             continue
         if not is_british(img):
             continue
