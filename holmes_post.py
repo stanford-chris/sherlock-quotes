@@ -220,9 +220,10 @@ def login_client(retries=4):
     fires. See everylibrary_post.py's login_client() and
     [[reference_bot_network_blip_retries]].
 
-    Only the login retries. A failed send_images is left to fail, because a
-    timeout there cannot distinguish a post that never landed from one that
+    Only the login retries here. send_post() itself is never retried, because
+    a timeout there cannot distinguish a post that never landed from one that
     landed with the response lost, and retrying the second case double-posts.
+    The image upload is a separate matter -- see upload_image_blob() below.
     """
     password = keychain_password(HANDLE, KEYCHAIN_SERVICE)  # outside the loop: a
     last_error = None                                       # missing key is not transient
@@ -237,6 +238,33 @@ def login_client(retries=4):
             if attempt + 1 < retries:
                 time.sleep(2 * (attempt + 1))
     raise RuntimeError(f'Could not log in to Bluesky after {retries} attempts: {last_error}')
+
+
+def upload_image_blob(client, image_bytes, retries=4):
+    """Upload one image, retrying a transient network blip at fire time.
+
+    Same shape as login_client() above, and safe for the same reason login is
+    safe to retry and send_post() is not: uploading a blob creates no visible
+    post, only a stored blob reference, so replaying it after a timeout can
+    never double-post. send_post() itself stays unretried, below, for exactly
+    the reason login_client()'s docstring gives.
+
+    This closed a real gap: on 6 September 2026 the 21:00 KST post was missed
+    when send_images()'s own internal upload_blob() call timed out (an
+    httpx.ReadTimeout), before any post existed to create -- confirmed by
+    reading atproto's send_images() source, which uploads the blob and only
+    then calls send_post() separately.
+    """
+    last_error = None
+    for attempt in range(retries):
+        try:
+            return client.upload_blob(image_bytes)
+        except exceptions.NetworkError as exc:
+            last_error = f'{type(exc).__name__}: {exc}'
+            print(f'Image upload attempt {attempt + 1}/{retries} failed ({last_error})')
+            if attempt + 1 < retries:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f'Could not upload image after {retries} attempts: {last_error}')
 
 
 def quote_id(text):
@@ -893,18 +921,16 @@ def main():
     # Post to Bluesky -- quote with image, then attribution as reply
     bsky = login_client()
 
+    # Upload retries (safe: no post exists yet); the send_post() calls below
+    # do not (see login_client()'s and upload_image_blob()'s docstrings).
+    upload = upload_image_blob(bsky, image_bytes)
+    embed = models.AppBskyEmbedImages.Main(
+        images=[models.AppBskyEmbedImages.Image(alt=alt_text, image=upload.blob)])
+
     if single:
-        response = bsky.send_images(
-            text=combined,
-            images=[image_bytes],
-            image_alts=[alt_text],
-        )
+        response = bsky.send_post(text=combined, embed=embed)
     else:
-        response = bsky.send_images(
-            text=post1,
-            images=[image_bytes],
-            image_alts=[alt_text],
-        )
+        response = bsky.send_post(text=post1, embed=embed)
         root_ref = models.create_strong_ref(response)
         bsky.send_post(
             text=post2,
