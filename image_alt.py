@@ -310,6 +310,25 @@ _ABSENT_LINE = re.compile(r'^\s*ABSENT\s*\|\s*(.+?)\s*(?:\||$)')
 _FOUND_LINE = re.compile(r'^\s*FOUND\s*\|')
 
 
+def _run_claude(image_bytes, prompt, *, env, model, timeout, suffix):
+    """Write the image to a scratch dir and run one confined `claude -p`
+    call with `prompt`, returning the CompletedProcess.
+
+    Raises subprocess.TimeoutExpired or OSError exactly as subprocess.run
+    does; callers keep their own exception handling and error-logging text
+    on top of this. This is the one place the actual `claude -p` invocation
+    is built, so the --restricted/--tools Read confinement, the env/cwd/
+    stdin=DEVNULL shape stay in exactly one spot.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        name = f'image{suffix}'
+        Path(td, name).write_bytes(image_bytes)
+        return subprocess.run(
+            ['claude', '-p', *CONFINED, '--model', model, prompt],
+            capture_output=True, text=True, env=env, cwd=td,
+            stdin=subprocess.DEVNULL, timeout=timeout)
+
+
 def _unsupported(image_bytes, text, *, env, model, timeout, suffix, log):
     """Claims in `text` that cannot be located in the image.
 
@@ -330,14 +349,9 @@ def _unsupported(image_bytes, text, *, env, model, timeout, suffix, log):
     # time, never silent, but worth knowing before reading a quiet log as a
     # clean bill of health.
     try:
-        with tempfile.TemporaryDirectory() as td:
-            name = f'image{suffix}'
-            Path(td, name).write_bytes(image_bytes)
-            r = subprocess.run(
-                ['claude', '-p', *CONFINED, '--model', model,
-                 VERIFY_PROMPT.format(name=name, alt=text)],
-                capture_output=True, text=True, env=env, cwd=td,
-                stdin=subprocess.DEVNULL, timeout=timeout)
+        name = f'image{suffix}'
+        r = _run_claude(image_bytes, VERIFY_PROMPT.format(name=name, alt=text),
+                         env=env, model=model, timeout=timeout, suffix=suffix)
     except (subprocess.TimeoutExpired, OSError) as exc:
         log(f'  (description not verified: {exc.__class__.__name__})')
         return None
@@ -361,13 +375,8 @@ def _generate(image_bytes, prompt, *, env, model, timeout, suffix, log):
     retried = False
     while True:
         try:
-            with tempfile.TemporaryDirectory() as td:
-                name = f'image{suffix}'
-                Path(td, name).write_bytes(image_bytes)
-                r = subprocess.run(
-                    ['claude', '-p', *CONFINED, '--model', model, prompt],
-                    capture_output=True, text=True, env=env, cwd=td,
-                    stdin=subprocess.DEVNULL, timeout=timeout)
+            r = _run_claude(image_bytes, prompt, env=env, model=model,
+                             timeout=timeout, suffix=suffix)
         except (subprocess.TimeoutExpired, OSError) as exc:
             log(f'  (image description unavailable: {exc.__class__.__name__})')
             # A verification failure already gets one retry, below. A raw
