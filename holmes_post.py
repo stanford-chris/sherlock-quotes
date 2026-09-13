@@ -58,23 +58,28 @@ CLAUDE_TOKEN_SERVICE = 'claude-oauth-token'
 _KNOWN_ARGS = {'--dry-run', '--tail'}
 
 
+def _tail_index(argv):
+    """Index into argv of the digit argument right after --tail, or None if
+    --tail is absent or not immediately followed by a digit."""
+    if '--tail' not in argv:
+        return None
+    i = argv.index('--tail')
+    if i + 1 < len(argv) and argv[i + 1].isdigit():
+        return i + 1
+    return None
+
+
 def _tail_n(argv):
     """N for `--tail [N]` (print recent alt text and exit), or None if absent.
     N defaults to 10 and a bare integer right after --tail overrides it."""
     if '--tail' not in argv:
         return None
-    i = argv.index('--tail')
-    if i + 1 < len(argv) and argv[i + 1].isdigit():
-        return max(1, int(argv[i + 1]))
-    return 10
+    idx = _tail_index(argv)
+    return max(1, int(argv[idx])) if idx is not None else 10
 
 
 if __name__ == '__main__':
-    _skip = None
-    if '--tail' in sys.argv:
-        _t = sys.argv.index('--tail')
-        if _t + 1 < len(sys.argv) and sys.argv[_t + 1].isdigit():
-            _skip = _t + 1
+    _skip = _tail_index(sys.argv)
     _unknown = [a for j, a in enumerate(sys.argv[1:], 1)
                 if a not in _KNOWN_ARGS and j != _skip]
     if _unknown:
