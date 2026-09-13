@@ -100,14 +100,7 @@ PROSE_SKIP = [
 
 
 def should_skip_prose(text):
-    lower = text.lower()
-    if any(phrase in lower for phrase in SKIP_PHRASES):
-        return True
-    if any(phrase in lower for phrase in PROSE_SKIP):
-        return True
-    if text.startswith('[') or text.startswith('('):
-        return True
-    return False
+    return should_skip(text) or any(phrase in text.lower() for phrase in PROSE_SKIP)
 
 MIN_LEN = 40    # characters
 MAX_LEN = 280   # Bluesky post limit
@@ -211,6 +204,14 @@ def should_skip(text):
     return False
 
 
+def split_paragraphs(text):
+    """Normalise line endings, collapse blank-line runs, and split on the
+    blank-line boundary."""
+    text = re.sub(r'\r\n', '\n', text)
+    text = re.sub(r'\n{2,}', '\n\n', text)
+    return text.split('\n\n')
+
+
 def is_dialogue_para(para):
     """True if the paragraph contains quoted speech."""
     return bool(re.search(r'[“\x22]', para))
@@ -255,9 +256,7 @@ def extract_dialogue(text, book_title):
     entries = []
     seen = set()
 
-    text = re.sub(r'\r\n', '\n', text)
-    text = re.sub(r'\n{2,}', '\n\n', text)
-    paragraphs = text.split('\n\n')
+    paragraphs = split_paragraphs(text)
 
     for para in paragraphs:
         para = para.replace('\n', ' ')
@@ -282,9 +281,7 @@ def extract_prose(text, book_title):
     entries = []
     seen = set()
 
-    text = re.sub(r'\r\n', '\n', text)
-    text = re.sub(r'\n{2,}', '\n\n', text)
-    paragraphs = text.split('\n\n')
+    paragraphs = split_paragraphs(text)
 
     for para in paragraphs:
         para = para.replace('\n', ' ').strip()
